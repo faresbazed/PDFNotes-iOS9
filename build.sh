@@ -76,6 +76,5 @@ echo "Packaging PDFNotes.ipa..."
 )
 
 cp "$ROOT_DIR/build/PDFNotes.ipa" "$ROOT_DIR/PDFNotes.ipa"
-cp "$ROOT_DIR/build/PDFNotes.ipa" "/home/antigravity/PDFNotes-v3.0-iOS9.ipa"
 
 echo "Built $ROOT_DIR/PDFNotes.ipa ($(stat -c%s "$ROOT_DIR/PDFNotes.ipa") bytes)"

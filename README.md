@@ -1,4 +1,4 @@
-# PDF Notes v3.0 (iPad 3 / iOS 9.3.6 Edition)
+# PDF Notes v3.2 (iPad 3 / iOS 9.3.6 Edition)
 
 Lightweight, native Objective-C PDF reader, handwritten annotator, and notebook app engineered specifically for **iPad 3 (`armv7` 32-bit, A5X SoC, 2048×1536 Retina display, 1 GB RAM) running iOS 9.0–9.3.6**.
 
@@ -23,7 +23,7 @@ In the library, swipe left on a PDF or notebook and tap **Favorite**, or long-pr
 ./build.sh
 ```
 
-Output IPA: `PDFNotes.ipa` (also copied to `/home/antigravity/PDFNotes-v3.0-iOS9.ipa`).
+Output IPA: `PDFNotes.ipa` in the repository root.
 
 ## Backward Compatibility
 
