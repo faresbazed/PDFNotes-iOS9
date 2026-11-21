@@ -96,6 +96,12 @@ void PDFDeleteAnnotations(NSString *itemPath, BOOL isDirectory, NSString *docume
 
 BOOL PDFDeleteLibraryItem(NSString *path, BOOL directory, NSString *documents, NSUserDefaults *defaults, NSError **error) {
     NSFileManager *fm = [NSFileManager defaultManager];
+    NSDictionary *attributes = [fm attributesOfItemAtPath:path error:error];
+    if (!attributes) return NO;
+    // A link uses its target's annotation key; it owns no annotations of its own.
+    if ([[attributes fileType] isEqualToString:NSFileTypeSymbolicLink]) {
+        return [fm removeItemAtPath:path error:error];
+    }
     if (directory) {
         // Detach the entire folder before a recursive purge can partially delete its contents.
         NSString *trash = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
