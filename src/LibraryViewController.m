@@ -5,6 +5,7 @@
 #import "PDFIcons.h"
 #import "LibraryNames.h"
 #import "LibraryFiles.h"
+#import "LibraryFavorites.h"
 
 typedef NS_ENUM(NSInteger, LibrarySortOrder) {
     LibrarySortByName = 0,
@@ -105,6 +106,8 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
     NSMutableArray<PDFLibraryItem *> *_filteredItems;
     LibrarySortOrder _sortOrder;
     NSString *_searchQuery;
+    NSSet<NSString *> *_favoritePaths;
+    BOOL _showingFavorites;
 
     NSCache *_coverCache;
     NSMutableDictionary<NSString *, NSNumber *> *_pageCountCache;
@@ -144,6 +147,12 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
     self.view.backgroundColor = [UIColor colorWithRed:0.95f green:0.95f blue:0.97f alpha:1.0f];
 
     self.title = [self isRootLibrary] ? @"PDF Notes" : [_directoryPath lastPathComponent];
+    if ([self isRootLibrary]) {
+        self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Favorites"
+                                                                               style:UIBarButtonItemStylePlain
+                                                                              target:self
+                                                                              action:@selector(toggleFavoritesView:)];
+    }
 
     UIBarButtonItem *addBtn = [[UIBarButtonItem alloc] initWithImage:PDFIconPlus()
                                                                style:UIBarButtonItemStylePlain
@@ -221,6 +230,23 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
     if ([self isRootLibrary]) PDFImportInboxDocuments([AnnotationStore documentsDirectory]);
 }
 
+- (PDFLibraryItem *)itemAtPath:(NSString *)path relativeFolder:(NSString *)folder isDirectory:(BOOL)isDir {
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:NULL];
+    PDFLibraryItem *item = [[PDFLibraryItem alloc] init];
+    item.name = isDir ? path.lastPathComponent : [path.lastPathComponent stringByDeletingPathExtension];
+    item.fullPath = path;
+    item.relativeFolder = folder;
+    item.isDirectory = isDir;
+    item.fileSize = [attrs[NSFileSize] unsignedLongLongValue];
+    item.modDate = attrs[NSFileModificationDate] ?: [NSDate distantPast];
+    item.cachedPageCount = _pageCountCache[path] ? [_pageCountCache[path] integerValue] : -1;
+    if (!isDir) {
+        item.hasAnnotations = [AnnotationStore hasSavedAnnotationsForPDFPath:path];
+        item.lastPage = [AnnotationStore savedLastPageForPDFPath:path];
+    }
+    return item;
+}
+
 - (void)collectItemsInDirectory:(NSString *)dir
                  relativePrefix:(NSString *)relPrefix
                       recursive:(BOOL)recursive
@@ -244,21 +270,7 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
             continue;
         }
 
-        NSDictionary *attrs = [fm attributesOfItemAtPath:full error:NULL];
-        PDFLibraryItem *item = [[PDFLibraryItem alloc] init];
-        item.name = isDir ? name : [name stringByDeletingPathExtension];
-        item.fullPath = full;
-        item.relativeFolder = relPrefix;
-        item.isDirectory = isDir;
-        item.fileSize = [attrs[NSFileSize] unsignedLongLongValue];
-        item.modDate = attrs[NSFileModificationDate] ?: [NSDate distantPast];
-        item.cachedPageCount = _pageCountCache[full] ? [_pageCountCache[full] integerValue] : -1;
-
-        if (!isDir) {
-            item.hasAnnotations = [AnnotationStore hasSavedAnnotationsForPDFPath:full];
-            item.lastPage = [AnnotationStore savedLastPageForPDFPath:full];
-        }
-        [outArray addObject:item];
+        [outArray addObject:[self itemAtPath:full relativeFolder:relPrefix isDirectory:isDir]];
 
         if (isDir && recursive) {
             NSString *nextRel = relPrefix.length > 0 ? [relPrefix stringByAppendingPathComponent:name] : name;
@@ -269,8 +281,17 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
 
 - (void)reloadFiles {
     [_allItems removeAllObjects];
-    BOOL searchingAll = (_searchQuery.length > 0 && [self isRootLibrary]);
-    [self collectItemsInDirectory:_directoryPath relativePrefix:@"" recursive:searchingAll into:_allItems];
+    NSString *docs = [AnnotationStore documentsDirectory];
+    _favoritePaths = PDFLibraryFavoritePaths(docs, [NSUserDefaults standardUserDefaults]);
+    if (_showingFavorites) {
+        for (NSString *path in PDFAvailableFavoriteDocuments(_favoritePaths, docs)) {
+            NSString *relative = [path substringFromIndex:docs.length + 1];
+            [_allItems addObject:[self itemAtPath:path relativeFolder:relative.stringByDeletingLastPathComponent isDirectory:NO]];
+        }
+    } else {
+        BOOL searchingAll = (_searchQuery.length > 0 && [self isRootLibrary]);
+        [self collectItemsInDirectory:_directoryPath relativePrefix:@"" recursive:searchingAll into:_allItems];
+    }
     [self applySortAndFilter];
 }
 
@@ -308,7 +329,10 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
 
     if (_filteredItems.count == 0) {
         _emptyLabel.hidden = NO;
-        if (q.length > 0) {
+        if (_showingFavorites) {
+            _emptyLabel.text = q.length ? [NSString stringWithFormat:@"No favorites matching \"%@\".", q]
+                                        : @"No favorites yet.\n\nIn the library, swipe left on a PDF or notebook and tap Favorite.";
+        } else if (q.length > 0) {
             _emptyLabel.text = [NSString stringWithFormat:@"No PDFs or folders matching \"%@\".", q];
         } else {
             _emptyLabel.text = @"No PDFs in this folder yet.\n\nTap + at the top right to create a Blank, Ruled, Grid, or Cornell Notebook — or import PDFs via iTunes File Sharing, Safari \"Copy to PDF Notes\", or Filza.";
@@ -320,9 +344,19 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
 
 #pragma mark - Search & Sort
 
-- (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText {
-    _searchQuery = [searchText copy];
+- (void)toggleFavoritesView:(UIBarButtonItem *)sender {
+    _showingFavorites = !_showingFavorites;
+    sender.title = _showingFavorites ? @"All Items" : @"Favorites";
+    self.title = _showingFavorites ? @"Favorites" : @"PDF Notes";
+    _searchBar.placeholder = _showingFavorites ? @"Search favorites…" : @"Search all PDFs & folders…";
     [self reloadFiles];
+}
+
+- (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText {
+    BOOL scopeChanged = (_searchQuery.length == 0) != (searchText.length == 0);
+    _searchQuery = [searchText copy];
+    if (!_showingFavorites && scopeChanged && [self isRootLibrary]) [self reloadFiles];
+    else [self applySortAndFilter];
 }
 
 - (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar {
@@ -489,7 +523,8 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
     PDFLibraryCell *cell = [tableView dequeueReusableCellWithIdentifier:@"LibCell" forIndexPath:indexPath];
     PDFLibraryItem *item = _filteredItems[(NSUInteger)indexPath.row];
     cell.representedPath = item.fullPath;
-    cell.titleLbl.text = item.name;
+    cell.titleLbl.text = !item.isDirectory && [_favoritePaths containsObject:item.fullPath]
+        ? [@"★ " stringByAppendingString:item.name] : item.name;
 
     if (item.isDirectory) {
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
@@ -605,6 +640,16 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
     return YES;
 }
 
+- (void)toggleFavoriteItem:(PDFLibraryItem *)item {
+    NSString *docs = [AnnotationStore documentsDirectory];
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    BOOL favorite = ![_favoritePaths containsObject:item.fullPath];
+    PDFSetLibraryFavorite(item.fullPath, favorite, docs, defaults);
+    _favoritePaths = PDFLibraryFavoritePaths(docs, defaults);
+    if (_showingFavorites && !favorite) [_allItems removeObject:item];
+    [self applySortAndFilter];
+}
+
 - (NSArray<UITableViewRowAction *> *)tableView:(UITableView *)tableView editActionsForRowAtIndexPath:(NSIndexPath *)indexPath {
     PDFLibraryItem *item = _filteredItems[(NSUInteger)indexPath.row];
     __weak typeof(self) weakSelf = self;
@@ -631,7 +676,15 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
             [weakSelf promptMoveItem:item sourceRect:[tableView rectForRowAtIndexPath:ip]];
         }];
         mov.backgroundColor = [UIColor colorWithRed:0.52f green:0.54f blue:0.60f alpha:1.0f];
-        return @[ del, mov, ren ];
+        NSString *title = [_favoritePaths containsObject:item.fullPath] ? @"Unfavorite" : @"Favorite";
+        UITableViewRowAction *fav = [UITableViewRowAction rowActionWithStyle:UITableViewRowActionStyleNormal
+                                                                       title:title
+                                                                     handler:^(UITableViewRowAction *action, NSIndexPath *ip) {
+            [tableView setEditing:NO animated:NO];
+            [weakSelf toggleFavoriteItem:item];
+        }];
+        fav.backgroundColor = [UIColor colorWithRed:0.63f green:0.40f blue:0.05f alpha:1.0f];
+        return @[ del, mov, ren, fav ];
     }
     return @[ del, ren ];
 }
@@ -653,6 +706,10 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
         [weakSelf promptRenameItem:item];
     }]];
     if (!item.isDirectory) {
+        NSString *title = [_favoritePaths containsObject:item.fullPath] ? @"Remove from Favorites" : @"Add to Favorites";
+        [ac addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            [weakSelf toggleFavoriteItem:item];
+        }]];
         [ac addAction:[UIAlertAction actionWithTitle:@"Move to Folder…" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
             [weakSelf promptMoveItem:item sourceRect:rowRect];
         }]];
@@ -696,6 +753,9 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
         }
         [sSelf->_coverCache removeObjectForKey:item.fullPath];
         [sSelf->_pageCountCache removeObjectForKey:item.fullPath];
+        if (![[NSFileManager defaultManager] fileExistsAtPath:item.fullPath]) {
+            PDFRelocateLibraryFavorites(item.fullPath, nil, item.isDirectory, [AnnotationStore documentsDirectory], [NSUserDefaults standardUserDefaults]);
+        }
         [sSelf reloadFiles];
     }]];
     [self presentViewController:ac animated:YES completion:nil];
@@ -739,6 +799,7 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
 
         if ([[NSFileManager defaultManager] moveItemAtPath:item.fullPath toPath:newPath error:NULL]) {
             [AnnotationStore moveAnnotationsFromPath:item.fullPath toPath:newPath isDirectory:item.isDirectory];
+            PDFRelocateLibraryFavorites(item.fullPath, newPath, item.isDirectory, [AnnotationStore documentsDirectory], [NSUserDefaults standardUserDefaults]);
             [sSelf reloadFiles];
         }
     }]];
@@ -803,6 +864,7 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
             NSString *newPath = PDFUniqueDestination(targetDir, [item.fullPath lastPathComponent]);
             if ([[NSFileManager defaultManager] moveItemAtPath:item.fullPath toPath:newPath error:NULL]) {
                 [AnnotationStore moveAnnotationsFromPath:item.fullPath toPath:newPath isDirectory:NO];
+                PDFRelocateLibraryFavorites(item.fullPath, newPath, NO, [AnnotationStore documentsDirectory], [NSUserDefaults standardUserDefaults]);
                 [sSelf reloadFiles];
             }
         }]];

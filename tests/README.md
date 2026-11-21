@@ -3,7 +3,7 @@
 From the repository root:
 
 ```sh
-./tests/run.sh                     # Annotation files / keys (system GNUstep)
+./tests/run.sh                     # Library favorites, names and annotation files (system GNUstep)
 python3 tests/run_stroke_undo.py    # Stroke undo (system GNUstep)
 ./tests/run_drag_undo.sh            # Sticky-note drag undo (libobjc2/ARC GNUstep)
 ```
