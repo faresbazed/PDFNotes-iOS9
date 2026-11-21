@@ -133,6 +133,7 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     CGFloat w = MAX(68.0f, MIN(maxWidth, ceilf((float)fit.width) + 14.0f));
     CGFloat h = MAX(28.0f, MIN(96.0f, ceilf((float)fit.height) + 10.0f));
     self.bounds = CGRectMake(0.0f, 0.0f, w, h);
+    self.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:self.bounds cornerRadius:6.0f].CGPath;
     _label.frame = CGRectInset(self.bounds, 7.0f, 5.0f);
 }
 
@@ -157,6 +158,9 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     NSMutableArray<PDFNoteBadgeView *> *_noteViews;
 
     PDFCancelToken *_pdfRenderToken;
+    CGFloat _requestedPixelWidth;
+    PDFReadingTheme _requestedTheme;
+    CGRect _requestedTrim;
     PDFCancelToken *_inkRenderToken;
     CGFloat _renderedPixelWidth;
     PDFReadingTheme _renderedTheme;
@@ -463,6 +467,9 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     if (needsPDF && !_pdfRenderToken) {
         PDFCancelToken *token = [[PDFCancelToken alloc] init];
         _pdfRenderToken = token;
+        _requestedPixelWidth = desiredPW;
+        _requestedTheme = curTheme;
+        _requestedTrim = curTrim;
         PDFDoc *doc = _doc;
         NSInteger idx = _pageIndex;
 
@@ -491,7 +498,10 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
                 }
             });
         });
-    } else if (needsPDF && _pdfRenderToken) {
+    } else if (needsPDF && _pdfRenderToken &&
+               (_requestedTheme != curTheme ||
+                !CGRectEqualToRect(_requestedTrim, curTrim) ||
+                fabs((double)(desiredPW - _requestedPixelWidth)) > 110.0)) {
         // Cancel stale in-flight render and schedule fresh one
         [_pdfRenderToken cancel];
         _pdfRenderToken = nil;

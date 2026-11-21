@@ -121,6 +121,7 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
         _filteredItems = [NSMutableArray array];
         _coverCache = [[NSCache alloc] init];
         _coverCache.countLimit = 64;
+        _coverCache.totalCostLimit = 4 * 1024 * 1024;
         _pageCountCache = [NSMutableDictionary dictionary];
         _sortOrder = (LibrarySortOrder)[[NSUserDefaults standardUserDefaults] integerForKey:kPrefLibrarySortKey];
     }
@@ -582,7 +583,8 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
                 PDFDoc *doc = [[PDFDoc alloc] initWithPath:path];
                 NSInteger pCount = doc.pageCount;
                 UIImage *thumb = (pCount > 0) ? [doc renderThumbnailAtIndex:0 maxPixelSide:60.0f * scale] : nil;
-                if (thumb) [cache setObject:thumb forKey:path];
+                if (thumb) [cache setObject:thumb forKey:path
+                                      cost:CGImageGetBytesPerRow(thumb.CGImage) * CGImageGetHeight(thumb.CGImage)];
 
                 dispatch_async(dispatch_get_main_queue(), ^{
                     __strong typeof(self) sSelf = weakSelf;
