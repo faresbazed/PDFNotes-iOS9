@@ -744,8 +744,7 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
         NSString *newFilename = item.isDirectory
             ? clean
             : ([[clean.pathExtension lowercaseString] isEqualToString:@"pdf"] ? clean : [clean stringByAppendingPathExtension:@"pdf"]);
-        if ([[parent stringByResolvingSymlinksInPath] isEqualToString:[[AnnotationStore documentsDirectory] stringByResolvingSymlinksInPath]] &&
-            PDFLibraryNameIsReserved(newFilename)) {
+        if (PDFLibraryRenameNameIsReserved(newFilename, [sSelf isRootLibrary], item.relativeFolder)) {
             [sSelf showReservedNameAlert];
             return;
         }

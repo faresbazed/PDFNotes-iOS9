@@ -19,13 +19,13 @@ AnnotationStore. Fixtures use a unique temporary Documents directory. Tests
 cover key escaping, deletion, renaming and migration, including collision and
 retry cases. Outputs go in `build/tests/annotation-tests`.
 
-`run.sh` also runs `run_library_names.py`, which extracts the production rename
-handler, filename sanitizer, unique destination and Inbox sweep into a
-Foundation-only fixture linked to `LibraryNames.m` and `AnnotationFiles.m`.
-It checks reserved root names (including case variants), normal/empty/error
-renames, nested folders, and the scout's rename-then-sweep data-loss repro.
-UIKit alert presentation is not exercised. Create's shared-helper call is
-checked in the runner; create continues to reject reserved names at all levels.
+`run.sh` also compiles `LibraryNamesTests.m` directly with the production
+Foundation-only `LibraryNames.m` helper. It checks case-insensitive reserved
+names, ordinary/PDF/empty names, and the root-vs-nested rename rule, including
+nested results in root-library searches. Outputs go in `build/tests/library-name-tests`.
+There is no source extraction. UIKit caller wiring, filesystem operations and
+alert presentation are not exercised by these unit tests. Create continues to
+reject reserved names at all levels.
 
 ## Stroke undo (`run_stroke_undo.py`)
 
