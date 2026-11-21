@@ -447,6 +447,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     _overlayActionBtn.hidden = YES;
     _loadingLabel.text = [NSString stringWithFormat:@"Optimizing margins (0 / %ld)…", (long)_doc.pageCount];
 
+    [_trimCancelToken cancel];
     PDFCancelToken *token = [[PDFCancelToken alloc] init];
     _trimCancelToken = token;
     PDFDoc *doc = _doc;
@@ -466,7 +467,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
 
         dispatch_async(dispatch_get_main_queue(), ^{
             __strong typeof(self) sSelf = weakSelf;
-            if (!sSelf || sSelf->_isClosing || token.isCancelled) return;
+            if (!sSelf || sSelf->_isClosing || token.isCancelled || sSelf->_trimCancelToken != token) return;
             sSelf->_trimCancelToken = nil;
             [sSelf->_spinner stopAnimating];
             sSelf->_loadingOverlay.hidden = YES;
@@ -476,14 +477,19 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
 }
 
 - (void)finishBuildingDocument {
+    // Re-entered after enabling Auto-Trim mid-read: keep the reader's place.
+    BOOL rebuilding = _didRestoreInitialPage;
+    NSInteger savedPage = _store.lastPageIndex;
     _pagesReady = YES;
     _lastLayoutSize = self.view.bounds.size;
-    [self layoutPagesPreservingAnchor:NO];
+    [self layoutPagesPreservingAnchor:rebuilding];
 
-    // Restore last read page if valid
-    if (!_didRestoreInitialPage) {
+    if (rebuilding) {
+        for (PageView *pv in [_loadedPages allValues]) {
+            [pv reloadAnnotationsFromStore];
+        }
+    } else {
         _didRestoreInitialPage = YES;
-        NSInteger savedPage = _store.lastPageIndex;
         if (savedPage > 0 && savedPage < _doc.pageCount) {
             [self jumpToPage:savedPage animated:NO];
         }
