@@ -91,6 +91,27 @@ int main(void) {
         [fm removeItemAtPath:docs error:NULL];
         for (NSString *key in @[@"annotationKeysPercentEscapedV1", @"lastPage.Course__Lecture.pdf", @"lastPage.Course%2FLecture.pdf", @"lastPage.Course%252FLecture.pdf", @"lastPage.Renamed%2FLecture.pdf", @"lastPage.Course%2FOnly.pdf"]) [defaults removeObjectForKey:key];
     }
+    @autoreleasepool {
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *docs = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
+        for (NSString *dir in @[@"Annotations", @"Course", @"Other"]) {
+            [fm createDirectoryAtPath:[docs stringByAppendingPathComponent:dir] withIntermediateDirectories:YES attributes:nil error:NULL];
+        }
+        NSString *root = [docs stringByAppendingPathComponent:@"Lecture.pdf"];
+        NSString *course = [docs stringByAppendingPathComponent:@"Course/Lecture.pdf"];
+        NSString *other = [docs stringByAppendingPathComponent:@"Other/Lecture.pdf"];
+        NSString *legacy = File(docs, @"Lecture.pdf");
+        Write(course);
+        Write(legacy);
+        Check([PDFLegacyAnnotationFile(course, docs) isEqual:legacy], "moved document keeps its legacy basename annotations");
+        Write(root);
+        Check(PDFLegacyAnnotationFile(root, docs) == nil, "root document reads its own file, not a fallback");
+        Check(PDFLegacyAnnotationFile(course, docs) == nil, "new subfolder document ignores root document's annotations");
+        [fm removeItemAtPath:root error:NULL];
+        Write(other);
+        Check(PDFLegacyAnnotationFile(course, docs) == nil && PDFLegacyAnnotationFile(other, docs) == nil, "ambiguous legacy basename is not shared");
+        [fm removeItemAtPath:docs error:NULL];
+    }
     printf("%d failure(s)\n", failures);
     return failures ? 1 : 0;
 }

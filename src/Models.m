@@ -438,11 +438,10 @@ static const NSUInteger kMaxUndoSteps = 45;
     NSString *loadedPath = primaryPath;
     NSData *data = [NSData dataWithContentsOfFile:primaryPath];
 
-    if (!data && _pdfPath.length > 0) {
-        // Legacy fallback: check Annotations/<pdfFilename>.plist (for files moved into subfolders from v1/v2.0)
-        NSString *basePlist = [[_pdfPath lastPathComponent] stringByAppendingPathExtension:@"plist"];
-        NSString *legacyPath = [[[self class] annotationsDirectory] stringByAppendingPathComponent:basePlist];
-        if (![legacyPath isEqualToString:primaryPath]) {
+    if (!data) {
+        // Legacy fallback: Annotations/<pdfFilename>.plist (for files moved into subfolders from v1/v2.0)
+        NSString *legacyPath = PDFLegacyAnnotationFile(_pdfPath, [[self class] documentsDirectory]);
+        if (legacyPath) {
             data = [NSData dataWithContentsOfFile:legacyPath];
             if (data) {
                 loadedPath = legacyPath;
