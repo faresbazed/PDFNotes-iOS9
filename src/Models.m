@@ -1,4 +1,5 @@
 #import "Models.h"
+#import "AnnotationFiles.h"
 #import <math.h>
 
 static inline CGFloat PDFSafeFloat(CGFloat v, CGFloat fallback, CGFloat minVal, CGFloat maxVal) {
@@ -353,17 +354,7 @@ static const NSUInteger kMaxUndoSteps = 45;
 }
 
 + (NSString *)annotationKeyForPDFPath:(NSString *)pdfPath {
-    if (pdfPath.length == 0) return @"untitled.pdf";
-    NSString *docs = [self documentsDirectory];
-    NSString *resolved = [pdfPath stringByResolvingSymlinksInPath] ?: [pdfPath stringByStandardizingPath];
-    NSString *prefix = [docs hasSuffix:@"/"] ? docs : [docs stringByAppendingString:@"/"];
-    if ([resolved hasPrefix:prefix]) {
-        NSString *rel = [resolved substringFromIndex:prefix.length];
-        if (rel.length > 0) {
-            return [rel stringByReplacingOccurrencesOfString:@"/" withString:@"__"];
-        }
-    }
-    return [resolved lastPathComponent];
+    return PDFAnnotationKey(pdfPath, [self documentsDirectory]);
 }
 
 + (NSString *)annotationFilePathForPDFPath:(NSString *)pdfPath {
@@ -397,73 +388,15 @@ static const NSUInteger kMaxUndoSteps = 45;
 }
 
 + (void)deleteAnnotationsForPath:(NSString *)itemPath isDirectory:(BOOL)isDirectory {
-    NSFileManager *fm = [NSFileManager defaultManager];
-    if (!isDirectory) {
-        NSString *plistPath = [self annotationFilePathForPDFPath:itemPath];
-        [fm removeItemAtPath:plistPath error:NULL];
-        NSString *key = [self annotationKeyForPDFPath:itemPath];
-        [[NSUserDefaults standardUserDefaults] removeObjectForKey:[NSString stringWithFormat:@"lastPage.%@", key]];
-        return;
-    }
-
-    NSString *docs = [self documentsDirectory];
-    NSString *resolved = [itemPath stringByResolvingSymlinksInPath] ?: [itemPath stringByStandardizingPath];
-    NSString *docsPrefix = [docs hasSuffix:@"/"] ? docs : [docs stringByAppendingString:@"/"];
-    if (![resolved hasPrefix:docsPrefix]) return;
-
-    NSString *relDir = [resolved substringFromIndex:docsPrefix.length];
-    NSString *keyPrefix = [[relDir stringByReplacingOccurrencesOfString:@"/" withString:@"__"] stringByAppendingString:@"__"];
-    NSString *annDir = [self annotationsDirectory];
-    NSArray<NSString *> *files = [fm contentsOfDirectoryAtPath:annDir error:NULL];
-    for (NSString *f in files) {
-        if ([f hasPrefix:keyPrefix]) {
-            [fm removeItemAtPath:[annDir stringByAppendingPathComponent:f] error:NULL];
-        }
-    }
+    PDFDeleteAnnotations(itemPath, isDirectory, [self documentsDirectory], [NSUserDefaults standardUserDefaults]);
 }
 
 + (void)moveAnnotationsFromPath:(NSString *)oldPath toPath:(NSString *)newPath isDirectory:(BOOL)isDirectory {
-    NSFileManager *fm = [NSFileManager defaultManager];
-    if (!isDirectory) {
-        NSString *oldPlist = [self annotationFilePathForPDFPath:oldPath];
-        NSString *newPlist = [self annotationFilePathForPDFPath:newPath];
-        if (![oldPlist isEqualToString:newPlist] && [fm fileExistsAtPath:oldPlist]) {
-            [fm removeItemAtPath:newPlist error:NULL];
-            [fm moveItemAtPath:oldPlist toPath:newPlist error:NULL];
-        }
-        NSString *oldDef = [NSString stringWithFormat:@"lastPage.%@", [self annotationKeyForPDFPath:oldPath]];
-        NSString *newDef = [NSString stringWithFormat:@"lastPage.%@", [self annotationKeyForPDFPath:newPath]];
-        NSInteger last = [[NSUserDefaults standardUserDefaults] integerForKey:oldDef];
-        if (last > 0) {
-            [[NSUserDefaults standardUserDefaults] setInteger:last forKey:newDef];
-            [[NSUserDefaults standardUserDefaults] removeObjectForKey:oldDef];
-        }
-        return;
-    }
+    PDFMoveAnnotations(oldPath, newPath, isDirectory, [self documentsDirectory], [NSUserDefaults standardUserDefaults]);
+}
 
-    NSString *docs = [self documentsDirectory];
-    NSString *docsPrefix = [docs hasSuffix:@"/"] ? docs : [docs stringByAppendingString:@"/"];
-    NSString *oldRes = [oldPath stringByResolvingSymlinksInPath] ?: [oldPath stringByStandardizingPath];
-    NSString *newRes = [newPath stringByResolvingSymlinksInPath] ?: [newPath stringByStandardizingPath];
-    if (![oldRes hasPrefix:docsPrefix] || ![newRes hasPrefix:docsPrefix]) return;
-
-    NSString *oldRel = [oldRes substringFromIndex:docsPrefix.length];
-    NSString *newRel = [newRes substringFromIndex:docsPrefix.length];
-    NSString *oldKeyPrefix = [[oldRel stringByReplacingOccurrencesOfString:@"/" withString:@"__"] stringByAppendingString:@"__"];
-    NSString *newKeyPrefix = [[newRel stringByReplacingOccurrencesOfString:@"/" withString:@"__"] stringByAppendingString:@"__"];
-
-    NSString *annDir = [self annotationsDirectory];
-    NSArray<NSString *> *files = [fm contentsOfDirectoryAtPath:annDir error:NULL];
-    for (NSString *f in files) {
-        if ([f hasPrefix:oldKeyPrefix]) {
-            NSString *suffix = [f substringFromIndex:oldKeyPrefix.length];
-            NSString *destName = [newKeyPrefix stringByAppendingString:suffix];
-            NSString *src = [annDir stringByAppendingPathComponent:f];
-            NSString *dst = [annDir stringByAppendingPathComponent:destName];
-            [fm removeItemAtPath:dst error:NULL];
-            [fm moveItemAtPath:src toPath:dst error:NULL];
-        }
-    }
++ (void)migrateLegacyAnnotationKeysIfNeeded {
+    PDFMigrateAnnotations([self documentsDirectory], [NSUserDefaults standardUserDefaults]);
 }
 
 - (instancetype)initWithPDFPath:(NSString *)pdfPath {

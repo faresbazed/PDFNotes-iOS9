@@ -76,6 +76,7 @@ typedef NS_ENUM(NSInteger, StrokeKind) {
 // Library file management helpers
 + (NSString *)documentsDirectory;
 + (NSString *)annotationKeyForPDFPath:(NSString *)pdfPath;
++ (void)migrateLegacyAnnotationKeysIfNeeded;
 + (NSString *)annotationFilePathForPDFPath:(NSString *)pdfPath;
 + (BOOL)hasSavedAnnotationsForPDFPath:(NSString *)pdfPath;
 + (NSInteger)savedLastPageForPDFPath:(NSString *)pdfPath;
