@@ -103,6 +103,7 @@
         _currentPage = currentPage;
         _thumbCache = [[NSCache alloc] init];
         _thumbCache.countLimit = 48;
+        _thumbCache.totalCostLimit = 8 * 1024 * 1024;
     }
     return self;
 }
@@ -277,7 +278,8 @@
             if (token.isCancelled) return;
             UIImage *img = [doc renderThumbnailAtIndex:page maxPixelSide:150.0f * scale];
             if (!img || token.isCancelled) return;
-            [cache setObject:img forKey:@(page)];
+            [cache setObject:img forKey:@(page)
+                        cost:CGImageGetBytesPerRow(img.CGImage) * CGImageGetHeight(img.CGImage)];
 
             dispatch_async(dispatch_get_main_queue(), ^{
                 PDFThumbCell *sCell = weakCell;

@@ -783,6 +783,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     CGFloat maxDockW = MAX(260.0f, boundsSz.width - 20.0f);
     CGFloat dockW = MIN(desiredDockW, maxDockW);
     _dockContainer.frame = CGRectMake(floorf((float)((boundsSz.width - dockW) * 0.5f)), topY, dockW, 46.0f);
+    _dockContainer.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:_dockContainer.bounds cornerRadius:14.0f].CGPath;
 
     _edgeTab.frame = CGRectMake(-6.0f, floorf((float)(boundsSz.height * 0.42f)), 34.0f, 72.0f);
 
@@ -792,6 +793,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     CGFloat panelX = colorInView.origin.x + colorInView.size.width * 0.5f - panelW * 0.5f;
     panelX = MAX(10.0f, MIN(boundsSz.width - panelW - 10.0f, panelX));
     _stylePanel.frame = CGRectMake(floorf((float)panelX), CGRectGetMaxY(_dockContainer.frame) + 8.0f, panelW, 212.0f);
+    _stylePanel.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:_stylePanel.bounds cornerRadius:14.0f].CGPath;
 
     // Search bar container
     CGFloat searchW = MIN(462.0f, boundsSz.width - 20.0f);
@@ -957,25 +959,30 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     return vis;
 }
 
+- (NSUInteger)firstPageEndingAtOrAfterY:(CGFloat)y {
+    NSUInteger lo = 0, hi = _pageFrames.count;
+    while (lo < hi) {
+        NSUInteger mid = lo + (hi - lo) / 2;
+        if (CGRectGetMaxY([_pageFrames[mid] CGRectValue]) < y) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
+}
+
 - (NSInteger)currentCenteredPageIndex {
     if (_pageFrames.count == 0) return 0;
     CGRect vis = [self currentViewportInContentCoords];
     CGFloat midY = CGRectGetMidY(vis);
 
-    NSInteger bestIdx = 0;
-    CGFloat bestDist = CGFLOAT_MAX;
-    for (NSUInteger i = 0; i < _pageFrames.count; i++) {
-        CGRect pf = [_pageFrames[i] CGRectValue];
-        if (midY >= pf.origin.y && midY <= CGRectGetMaxY(pf)) {
-            return (NSInteger)i;
-        }
-        CGFloat d = fabs((double)(CGRectGetMidY(pf) - midY));
-        if (d < bestDist) {
-            bestDist = d;
-            bestIdx = (NSInteger)i;
-        }
+    NSUInteger i = [self firstPageEndingAtOrAfterY:midY];
+    if (i == _pageFrames.count) return (NSInteger)i - 1;
+    CGRect pf = [_pageFrames[i] CGRectValue];
+    if (i > 0 && midY < CGRectGetMinY(pf)) {
+        CGRect prev = [_pageFrames[i - 1] CGRectValue];
+        if (fabs((double)(CGRectGetMidY(prev) - midY)) <=
+            fabs((double)(CGRectGetMidY(pf) - midY))) return (NSInteger)i - 1;
     }
-    return bestIdx;
+    return (NSInteger)i;
 }
 
 - (PageView *)ensurePageViewLoadedAtIndex:(NSInteger)index {
@@ -1007,20 +1014,23 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     CGRect keepWindow   = CGRectInset(vis, 0.0f, -vh * 1.25f);
     CGFloat zoom = _scrollView.zoomScale;
 
-    for (NSUInteger i = 0; i < _pageFrames.count; i++) {
+    NSUInteger first = [self firstPageEndingAtOrAfterY:CGRectGetMinY(renderWindow)];
+    for (NSUInteger i = first; i < _pageFrames.count; i++) {
         CGRect pf = [_pageFrames[i] CGRectValue];
+        if (CGRectGetMinY(pf) > CGRectGetMaxY(renderWindow)) break;
         if (CGRectIntersectsRect(pf, renderWindow)) {
             PageView *pv = [self ensurePageViewLoadedAtIndex:(NSInteger)i];
             if (forceRender || ![pv hasLoadedBitmap]) {
                 [pv renderContentWithZoomScale:zoom];
             }
-        } else if (!CGRectIntersectsRect(pf, keepWindow)) {
-            PageView *pv = _loadedPages[@(i)];
-            if (pv) {
-                [pv releaseContent];
-                [pv removeFromSuperview];
-                [_loadedPages removeObjectForKey:@(i)];
-            }
+        }
+    }
+    for (NSNumber *key in [_loadedPages allKeys]) {
+        PageView *pv = _loadedPages[key];
+        if (!CGRectIntersectsRect(pv.frame, keepWindow)) {
+            [pv releaseContent];
+            [pv removeFromSuperview];
+            [_loadedPages removeObjectForKey:key];
         }
     }
 
