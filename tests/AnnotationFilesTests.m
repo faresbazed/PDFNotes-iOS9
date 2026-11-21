@@ -72,6 +72,22 @@ int main(void) {
               [[NSString stringWithContentsOfFile:File(docs, @"Course%252FLecture.pdf") encoding:NSUTF8StringEncoding error:NULL] isEqual:@"percent-root"], "migration disambiguates destination that is another legacy file");
         Check([defaults integerForKey:@"lastPage.Course%2FLecture.pdf"] == 11 &&
               [defaults integerForKey:@"lastPage.Course%252FLecture.pdf"] == 22, "migration disambiguates destination that is another legacy default");
+        [defaults removeObjectForKey:@"annotationKeysPercentEscapedV1"];
+        [fm removeItemAtPath:File(docs, @"Course%252FLecture.pdf") error:NULL];
+        [fm createDirectoryAtPath:File(docs, @"Course%252FLecture.pdf") withIntermediateDirectories:NO attributes:nil error:NULL];
+        [@"percent-root" writeToFile:File(docs, @"Course%2FLecture.pdf") atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+        [defaults setInteger:22 forKey:@"lastPage.Course%2FLecture.pdf"];
+        [defaults removeObjectForKey:@"lastPage.Course%252FLecture.pdf"];
+        PDFMigrateAnnotations(docs, defaults);
+        Check([[NSString stringWithContentsOfFile:File(docs, @"Course%2FLecture.pdf") encoding:NSUTF8StringEncoding error:NULL] isEqual:@"percent-root"] &&
+              [defaults integerForKey:@"lastPage.Course%2FLecture.pdf"] == 22 &&
+              ![defaults boolForKey:@"annotationKeysPercentEscapedV1"], "failed migration preserves legacy destination and allows retry");
+        [fm removeItemAtPath:File(docs, @"Course%252FLecture.pdf") error:NULL];
+        PDFMigrateAnnotations(docs, defaults);
+        Check([[NSString stringWithContentsOfFile:File(docs, @"Course%252FLecture.pdf") encoding:NSUTF8StringEncoding error:NULL] isEqual:@"percent-root"] &&
+              [defaults integerForKey:@"lastPage.Course%252FLecture.pdf"] == 22 &&
+              [defaults integerForKey:@"lastPage.Course%2FLecture.pdf"] == 11 &&
+              [defaults boolForKey:@"annotationKeysPercentEscapedV1"], "migration retries after destination obstruction removed");
         [fm removeItemAtPath:docs error:NULL];
         for (NSString *key in @[@"annotationKeysPercentEscapedV1", @"lastPage.Course__Lecture.pdf", @"lastPage.Course%2FLecture.pdf", @"lastPage.Course%252FLecture.pdf", @"lastPage.Renamed%2FLecture.pdf", @"lastPage.Course%2FOnly.pdf"]) [defaults removeObjectForKey:key];
     }

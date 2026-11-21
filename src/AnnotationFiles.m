@@ -153,24 +153,48 @@ void PDFMigrateAnnotations(NSString *documents, NSUserDefaults *defaults) {
     }
     NSMutableSet *migratedFiles = [NSMutableSet set];
     NSMutableSet *migratedDefaults = [NSMutableSet set];
-    for (NSString *legacy in claimants) {
-        NSData *data = [legacyData objectForKey:legacy];
-        NSString *oldDefault = [@"lastPage." stringByAppendingString:legacy];
-        id page = [oldDefaults objectForKey:oldDefault];
-        BOOL copied = YES;
-        for (NSString *key in [claimants objectForKey:legacy]) {
-            BOOL destinationIsLegacy = [claimants objectForKey:key] != nil;
-            NSString *dest = [annDir stringByAppendingPathComponent:[key stringByAppendingPathExtension:@"plist"]];
-            if (data && (destinationIsLegacy || ![fm fileExistsAtPath:dest]) && ![data writeToFile:dest atomically:YES]) {
-                success = NO;
-                copied = NO;
+    NSMutableSet *completed = [NSMutableSet set];
+    NSMutableSet *pending = [NSMutableSet setWithArray:[claimants allKeys]];
+    BOOL progress = YES;
+    while (pending.count > 0 && progress) {
+        progress = NO;
+        for (NSString *legacy in [pending allObjects]) {
+            BOOL ready = YES;
+            for (NSString *key in [claimants objectForKey:legacy]) {
+                if ([claimants objectForKey:key] && ![completed containsObject:key]) ready = NO;
             }
-            NSString *newDefault = [@"lastPage." stringByAppendingString:key];
-            if (page && (destinationIsLegacy || ![defaults objectForKey:newDefault])) [defaults setObject:page forKey:newDefault];
+            if (!ready) continue;
+            NSData *data = [legacyData objectForKey:legacy];
+            NSString *oldDefault = [@"lastPage." stringByAppendingString:legacy];
+            id page = [oldDefaults objectForKey:oldDefault];
+            BOOL copied = YES;
+            NSString *source = [annDir stringByAppendingPathComponent:[legacy stringByAppendingPathExtension:@"plist"]];
+            if (!data && [fm fileExistsAtPath:source]) copied = NO;
+            for (NSString *key in [claimants objectForKey:legacy]) {
+                BOOL destinationIsLegacy = [claimants objectForKey:key] != nil;
+                NSString *dest = [annDir stringByAppendingPathComponent:[key stringByAppendingPathExtension:@"plist"]];
+                BOOL directory = NO;
+                BOOL exists = [fm fileExistsAtPath:dest isDirectory:&directory];
+                if (data && (directory || ((destinationIsLegacy || !exists) && ![data writeToFile:dest atomically:YES]))) {
+                    copied = NO;
+                }
+            }
+            if (copied) {
+                for (NSString *key in [claimants objectForKey:legacy]) {
+                    NSString *newDefault = [@"lastPage." stringByAppendingString:key];
+                    if (page && ([claimants objectForKey:key] || ![defaults objectForKey:newDefault])) [defaults setObject:page forKey:newDefault];
+                }
+                if (data) [migratedFiles addObject:legacy];
+                if (page) [migratedDefaults addObject:legacy];
+                [completed addObject:legacy];
+            } else {
+                success = NO;
+            }
+            [pending removeObject:legacy];
+            progress = YES;
         }
-        if (data && copied) [migratedFiles addObject:legacy];
-        if (page) [migratedDefaults addObject:legacy];
     }
+    if (pending.count > 0) success = NO;
     for (NSString *legacy in migratedFiles) {
         if (![currentKeys containsObject:legacy]) {
             NSString *path = [annDir stringByAppendingPathComponent:[legacy stringByAppendingPathExtension:@"plist"]];
