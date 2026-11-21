@@ -1,4 +1,6 @@
 #import "AnnotationFiles.h"
+#include <errno.h>
+#include <stdio.h>
 
 static NSString *EscapeKey(NSString *relativePath) {
     return [[relativePath stringByReplacingOccurrencesOfString:@"%" withString:@"%25"]
@@ -93,7 +95,20 @@ void PDFDeleteAnnotations(NSString *itemPath, BOOL isDirectory, NSString *docume
 }
 
 BOOL PDFDeleteLibraryItem(NSString *path, BOOL directory, NSString *documents, NSUserDefaults *defaults, NSError **error) {
-    if (![[NSFileManager defaultManager] removeItemAtPath:path error:error]) return NO;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (directory) {
+        // Detach the entire folder before a recursive purge can partially delete its contents.
+        NSString *trash = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
+        if (rename(path.fileSystemRepresentation, trash.fileSystemRepresentation) != 0) {
+            int code = errno;
+            if (error) *error = [NSError errorWithDomain:NSPOSIXErrorDomain code:code userInfo:@{NSFilePathErrorKey: path}];
+            return NO;
+        }
+        PDFDeleteAnnotations(path, YES, documents, defaults);
+        [fm removeItemAtPath:trash error:NULL]; // iOS can reclaim anything left in tmp.
+        return YES;
+    }
+    if (![fm removeItemAtPath:path error:error]) return NO;
     PDFDeleteAnnotations(path, directory, documents, defaults);
     return YES;
 }

@@ -83,6 +83,13 @@ int main(void) { @autoreleasepool {
     Check(PDFDeleteLibraryItem(pdf, NO, docs, defaults, NULL) && ![fm fileExistsAtPath:pdf] &&
           ![fm fileExistsAtPath:sidecar] && ![defaults objectForKey:lastPage], "successful delete cleans associated state");
     Write(pdf, @"page"); Write(sidecar, @"annotations"); [defaults setInteger:2 forKey:lastPage];
+    if (geteuid() != 0) {
+        if (chmod(docs.fileSystemRepresentation, 0555)) abort();
+        Check(!PDFDeleteLibraryItem(folder, YES, docs, defaults, NULL) && [Read(pdf) isEqual:@"page"] &&
+              [Read(sidecar) isEqual:@"annotations"] && [defaults integerForKey:lastPage] == 2,
+              "failure to remove a folder from its parent does not partially delete its contents");
+        if (chmod(docs.fileSystemRepresentation, 0755)) abort();
+    }
     Check(PDFDeleteLibraryItem(folder, YES, docs, defaults, NULL) && ![fm fileExistsAtPath:folder] &&
           ![fm fileExistsAtPath:sidecar] && ![defaults objectForKey:lastPage], "successful folder deletion cleans child state");
     [defaults removeObjectForKey:lastPage];
