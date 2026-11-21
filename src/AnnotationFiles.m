@@ -23,6 +23,13 @@ static NSString *AnnotationFile(NSString *path, NSString *documents) {
     return [[documents stringByAppendingPathComponent:@"Annotations"] stringByAppendingPathComponent:[PDFAnnotationKey(path, documents) stringByAppendingPathExtension:@"plist"]];
 }
 
+NSString *PDFLegacyAnnotationFile(NSString *pdfPath, NSString *documents) {
+    if (pdfPath.length == 0) return nil;
+    NSString *legacy = [[documents stringByAppendingPathComponent:@"Annotations"] stringByAppendingPathComponent:[[pdfPath lastPathComponent] stringByAppendingPathExtension:@"plist"]];
+    if ([legacy isEqualToString:AnnotationFile(pdfPath, documents)]) return nil;
+    return legacy;
+}
+
 void PDFDeleteAnnotations(NSString *itemPath, BOOL isDirectory, NSString *documents, NSUserDefaults *defaults) {
     NSFileManager *fm = [NSFileManager defaultManager];
     if (!isDirectory) {
