@@ -388,8 +388,8 @@ static const NSUInteger kMaxUndoSteps = 45;
     return [[NSUserDefaults standardUserDefaults] integerForKey:key];
 }
 
-+ (void)deleteAnnotationsForPath:(NSString *)itemPath isDirectory:(BOOL)isDirectory {
-    PDFDeleteAnnotations(itemPath, isDirectory, [self documentsDirectory], [NSUserDefaults standardUserDefaults]);
++ (BOOL)deleteLibraryItemAtPath:(NSString *)itemPath isDirectory:(BOOL)isDirectory error:(NSError **)error {
+    return PDFDeleteLibraryItem(itemPath, isDirectory, [self documentsDirectory], [NSUserDefaults standardUserDefaults], error);
 }
 
 + (void)moveAnnotationsFromPath:(NSString *)oldPath toPath:(NSString *)newPath isDirectory:(BOOL)isDirectory {

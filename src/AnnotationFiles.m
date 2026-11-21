@@ -1,4 +1,6 @@
 #import "AnnotationFiles.h"
+#include <errno.h>
+#include <stdio.h>
 
 static NSString *EscapeKey(NSString *relativePath) {
     return [[relativePath stringByReplacingOccurrencesOfString:@"%" withString:@"%25"]
@@ -90,6 +92,31 @@ void PDFDeleteAnnotations(NSString *itemPath, BOOL isDirectory, NSString *docume
     for (NSString *key in [defaults dictionaryRepresentation]) {
         if ([key hasPrefix:defaultsPrefix]) [defaults removeObjectForKey:key];
     }
+}
+
+BOOL PDFDeleteLibraryItem(NSString *path, BOOL directory, NSString *documents, NSUserDefaults *defaults, NSError **error) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSDictionary *attributes = [fm attributesOfItemAtPath:path error:error];
+    if (!attributes) return NO;
+    // A link uses its target's annotation key; it owns no annotations of its own.
+    if ([[attributes fileType] isEqualToString:NSFileTypeSymbolicLink]) {
+        return [fm removeItemAtPath:path error:error];
+    }
+    if (directory) {
+        // Detach the entire folder before a recursive purge can partially delete its contents.
+        NSString *trash = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
+        if (rename(path.fileSystemRepresentation, trash.fileSystemRepresentation) != 0) {
+            int code = errno;
+            if (error) *error = [NSError errorWithDomain:NSPOSIXErrorDomain code:code userInfo:@{NSFilePathErrorKey: path}];
+            return NO;
+        }
+        PDFDeleteAnnotations(path, YES, documents, defaults);
+        [fm removeItemAtPath:trash error:NULL]; // iOS can reclaim anything left in tmp.
+        return YES;
+    }
+    if (![fm removeItemAtPath:path error:error]) return NO;
+    PDFDeleteAnnotations(path, directory, documents, defaults);
+    return YES;
 }
 
 void PDFMoveAnnotations(NSString *oldPath, NSString *newPath, BOOL isDirectory, NSString *documents, NSUserDefaults *defaults) {
