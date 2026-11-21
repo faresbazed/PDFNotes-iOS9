@@ -1,12 +1,18 @@
-# Sticky-note drag undo regression (Linux)
+# Linux undo regressions
 
 From the repository root:
 
 ```sh
 ./tests/run.sh
+python3 tests/run_stroke_undo.py
 ```
 
-Requires Python 3, clang, and GNUstep Foundation built with **libobjc2/ARC**.
+Both tests require Python 3, clang and GNUstep Foundation. Neither requires an
+iOS SDK or tests rendering, disk persistence or UIKit behavior.
+
+## Sticky-note drag undo (`run.sh`)
+
+Requires GNUstep Foundation built with **libobjc2/ARC**.
 `GNUSTEP_CONFIG` can select a different installation; the default is
 `$HOME/gnustep/System/Tools/gnustep-config`. Ubuntu's stock GNUstep uses the
 legacy GCC runtime and cannot compile the app's ARC/weak references.
@@ -24,14 +30,32 @@ an undo implementation bug. The regression exercises preview, ended and
 cancelled drags (both commit under existing behavior), undo/redo, and one-entry
 history, plus empty pages, missing IDs and nonfinite positions.
 
+## Stroke undo (`run_stroke_undo.py`)
+
+Uses the system `gnustep-config` on `PATH` and Ubuntu's stock GNUstep/GCC
+runtime. The runner extracts production stroke/history methods from
+`src/Models.m`, desugars dictionary subscripting for the legacy runtime, and
+compiles and executes the assertions. The fixture supplies legacy-runtime
+ivars/properties, a copyable stroke payload in place of UIKit geometry, and an
+in-memory store with persistence disabled. Generated files live in a temporary
+directory and are removed automatically.
+
 ## One-time Ubuntu setup
 
-The following builds an isolated Foundation installation in your home directory
-(does not replace system libraries). Run outside the repository:
+Install the shared tools and system Foundation first. This is sufficient for
+the stroke test:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y clang cmake ninja-build git libffi-dev libxml2-dev
+sudo apt-get install -y clang libgnustep-base-dev cmake ninja-build git libffi-dev libxml2-dev
+```
+
+For the sticky-note test, also build an isolated ARC-capable Foundation in your
+home directory. It does not replace system libraries or change `PATH`, so the
+stroke harness continues to use the system installation. Run outside the
+repository:
+
+```sh
 mkdir -p "$HOME/gnustep-src"
 cd "$HOME/gnustep-src"
 git clone --depth 1 --branch v2.2.1 https://github.com/gnustep/libobjc2.git
@@ -49,6 +73,7 @@ cd make
   CPPFLAGS="-I$HOME/gnustep/include" \
   LDFLAGS="-L$HOME/gnustep/lib -Wl,-rpath,$HOME/gnustep/lib"
 make install
+(
 . "$HOME/gnustep/System/Library/Makefiles/GNUstep.sh"
 cd ../base
 ./configure --disable-tls --disable-icu CC=clang CXX=clang++ \
@@ -56,7 +81,10 @@ cd ../base
   LDFLAGS="-L$HOME/gnustep/lib -Wl,-rpath,$HOME/gnustep/lib"
 make -j4
 make install
+)
 ```
 
 TLS/ICU are not needed for this in-memory regression. CMake may fetch the
 libobjc2 robin-map dependency if it is not installed already.
+
+The app build remains `./build.sh` with the iOS SDK/toolchain installed.
