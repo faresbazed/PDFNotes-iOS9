@@ -5,3 +5,6 @@ mkdir -p build/tests
 clang $(gnustep-config --objc-flags) -I"$(gcc -print-file-name=include)" -Isrc \
     tests/AnnotationFilesTests.m src/AnnotationFiles.m -o build/tests/annotation-tests $(gnustep-config --base-libs)
 build/tests/annotation-tests
+clang $(gnustep-config --objc-flags) -I"$(gcc -print-file-name=include)" -Isrc \
+    tests/LibraryFilenameTests.m src/LibraryFilename.m -o build/tests/library-filename-tests $(gnustep-config --base-libs)
+build/tests/library-filename-tests

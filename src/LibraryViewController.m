@@ -3,6 +3,7 @@
 #import "Models.h"
 #import "PDFDoc.h"
 #import "PDFIcons.h"
+#import "LibraryFilename.h"
 
 typedef NS_ENUM(NSInteger, LibrarySortOrder) {
     LibrarySortByName = 0,
@@ -488,9 +489,7 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
 }
 
 - (NSString *)sanitizeFilename:(NSString *)input {
-    NSString *trimmed = [input stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    NSCharacterSet *illegal = [NSCharacterSet characterSetWithCharactersInString:@"/\\:*"];
-    return [[trimmed componentsSeparatedByCharactersInSet:illegal] componentsJoinedByString:@"-"];
+    return PDFSanitizeLibraryFilename(input);
 }
 
 #pragma mark - UITableView DataSource & Async Thumbnails
