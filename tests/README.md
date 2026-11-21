@@ -1,7 +1,29 @@
-# Foundation regression tests
+# Linux model regression tests
 
-Run from the repository root: `tests/run.sh`
+Install dependencies and run from the repository root:
 
-On Ubuntu, install `clang libgnustep-base-dev` first. Tests compile the same
-Foundation-only annotation file helper used by AnnotationStore; UIKit is not
-required. Fixtures use a unique temporary Documents directory.
+```sh
+sudo apt-get update
+sudo apt-get install -y clang libgnustep-base-dev
+```
+
+## Annotation files
+
+Run: `tests/run.sh`
+
+Tests compile the same Foundation-only annotation file helper used by
+AnnotationStore; UIKit is not required. Fixtures use a unique temporary
+Documents directory.
+
+## Stroke undo
+
+Run: `python3 tests/run_stroke_undo.py`
+
+The runner extracts the production stroke/history methods from `src/Models.m`
+at runtime, compiles them with GNUstep Foundation, and executes the assertions.
+It desugars dictionary subscripting for Ubuntu's legacy Objective-C runtime.
+The fixture supplies legacy-runtime ivars/properties, a copyable stroke payload
+in place of UIKit geometry, and an in-memory store with persistence disabled.
+It does not test rendering, disk persistence, or UIKit. Generated files live in
+a temporary directory and are removed automatically. The app build remains
+`./build.sh` with the iOS SDK/toolchain installed.
