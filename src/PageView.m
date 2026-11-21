@@ -436,7 +436,6 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
 
     if (gr.state == UIGestureRecognizerStateEnded || gr.state == UIGestureRecognizerStateCancelled) {
         CGPoint norm = [self normalisedPointForViewPoint:f.origin];
-        badge.note.normalizedPosition = norm;
         [_store moveNoteWithID:badge.note.identifier toNormalizedPosition:norm onPage:_pageIndex recordUndo:YES];
         [self.delegate pageViewDidChangeAnnotations:self];
     }
