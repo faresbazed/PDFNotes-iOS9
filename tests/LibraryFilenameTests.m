@@ -1,4 +1,4 @@
-#import "LibraryFilename.h"
+#import "LibraryNames.h"
 #include <stdio.h>
 
 static int failures;
@@ -18,6 +18,9 @@ int main(void) {
             Check(clean.length == 0 || ![clean hasPrefix:@"."], [[NSString stringWithFormat:@"visible or empty case %lu", (unsigned long)i] UTF8String]);
         }
         Check(PDFSanitizeLibraryFilename(nil).length == 0, "nil uses empty-name handling");
+        Check(PDFLibraryNameIsReserved(PDFSanitizeLibraryFilename(@".Inbox")), "create validation sees sanitized reserved name");
+        Check(PDFLibraryRenameNameIsReserved(PDFSanitizeLibraryFilename(@"..Annotations"), YES, @""), "root rename validation sees sanitized reserved name");
+        Check(!PDFLibraryRenameNameIsReserved(PDFSanitizeLibraryFilename(@".Inbox"), NO, @""), "nested rename keeps existing reserved-name rule");
         NSFileManager *fm = [NSFileManager defaultManager];
         NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
         Check([fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL], "create fixture directory");

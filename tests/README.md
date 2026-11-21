@@ -14,7 +14,8 @@ because Ubuntu's stock GCC runtime cannot compile the app's ARC/weak references.
 
 ## Annotation files (`run.sh`)
 
-Also compiles the production Foundation-only library filename sanitizer and
+Also compiles the production Foundation-only library filename sanitizer in
+`LibraryNames.m` and
 checks leading dots, empty names, existing character replacement, and visibility
 of created PDFs and folders under the library's dot-file filter. The binary is
 `build/tests/library-filename-tests`.
@@ -23,6 +24,14 @@ Compiles the production Foundation-only annotation file helper used by
 AnnotationStore. Fixtures use a unique temporary Documents directory. Tests
 cover key escaping, deletion, renaming and migration, including collision and
 retry cases. Outputs go in `build/tests/annotation-tests`.
+
+`run.sh` also compiles `LibraryNamesTests.m` directly with the production
+Foundation-only `LibraryNames.m` helper. It checks case-insensitive reserved
+names, ordinary/PDF/empty names, and the root-vs-nested rename rule, including
+nested results in root-library searches. Outputs go in `build/tests/library-name-tests`.
+There is no source extraction. UIKit caller wiring, filesystem operations and
+alert presentation are not exercised by these unit tests. Create continues to
+reject reserved names at all levels.
 
 ## Stroke undo (`run_stroke_undo.py`)
 
