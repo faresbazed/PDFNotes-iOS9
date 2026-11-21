@@ -1,5 +1,6 @@
 #import "AppDelegate.h"
 #import "LibraryViewController.h"
+#import "LibraryFiles.h"
 #import "Models.h"
 
 @implementation AppDelegate
@@ -32,44 +33,18 @@
 
 - (BOOL)handleIncomingURL:(NSURL *)url {
     if (!url || !url.isFileURL) return NO;
-    NSString *srcPath = [url.path stringByResolvingSymlinksInPath] ?: url.path;
-    NSFileManager *fm = [NSFileManager defaultManager];
-    if (![fm fileExistsAtPath:srcPath]) return NO;
-
-    NSString *docs = [AnnotationStore documentsDirectory];
-    NSString *inbox = [docs stringByAppendingPathComponent:@"Inbox"];
-    NSString *docsPrefix = [docs hasSuffix:@"/"] ? docs : [docs stringByAppendingString:@"/"];
-    NSString *inboxPrefix = [inbox hasSuffix:@"/"] ? inbox : [inbox stringByAppendingString:@"/"];
-
-    NSString *finalPath = srcPath;
-
-    // Copy/move into Documents if coming from Inbox or outside Documents
-    if (![srcPath hasPrefix:docsPrefix] || [srcPath hasPrefix:inboxPrefix]) {
-        NSString *filename = [srcPath lastPathComponent];
-        if (filename.length == 0) filename = @"Imported.pdf";
-        NSString *base = [filename stringByDeletingPathExtension];
-        NSString *ext = [filename pathExtension];
-        if (ext.length == 0) ext = @"pdf";
-
-        NSString *dest = [docs stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.%@", base, ext]];
-        NSInteger n = 2;
-        while ([fm fileExistsAtPath:dest]) {
-            dest = [docs stringByAppendingPathComponent:[NSString stringWithFormat:@"%@-%ld.%@", base, (long)n++, ext]];
-        }
-
-        NSError *err = nil;
-        if ([srcPath hasPrefix:inboxPrefix]) {
-            if (![fm moveItemAtPath:srcPath toPath:dest error:&err]) {
-                [fm copyItemAtPath:srcPath toPath:dest error:NULL];
-                [fm removeItemAtPath:srcPath error:NULL];
-            }
-        } else {
-            [fm copyItemAtPath:srcPath toPath:dest error:&err];
-        }
-
-        if ([fm fileExistsAtPath:dest]) {
-            finalPath = dest;
-        }
+    if (![[NSFileManager defaultManager] fileExistsAtPath:url.path]) return NO;
+    NSError *error = nil;
+    NSString *finalPath = PDFImportDocument(url.path, [AnnotationStore documentsDirectory], &error);
+    if (!finalPath) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Could Not Import PDF"
+                                                                       message:error.localizedDescription
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        UIViewController *presenter = self.nav;
+        while (presenter.presentedViewController) presenter = presenter.presentedViewController;
+        [presenter presentViewController:alert animated:YES completion:nil];
+        return NO;
     }
 
     if (self.nav.presentedViewController) {

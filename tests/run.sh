@@ -11,3 +11,6 @@ build/tests/annotation-tests
 clang $(gnustep-config --objc-flags) -I"$(gcc -print-file-name=include)" -Isrc \
     tests/LibraryNamesTests.m src/LibraryNames.m -o build/tests/library-name-tests $(gnustep-config --base-libs)
 build/tests/library-name-tests
+clang $(gnustep-config --objc-flags) -I"$(gcc -print-file-name=include)" -Isrc \
+    tests/LibraryFilesTests.m src/LibraryFiles.m src/AnnotationFiles.m -o build/tests/library-file-tests $(gnustep-config --base-libs)
+build/tests/library-file-tests

@@ -80,7 +80,7 @@ typedef NS_ENUM(NSInteger, StrokeKind) {
 + (NSString *)annotationFilePathForPDFPath:(NSString *)pdfPath;
 + (BOOL)hasSavedAnnotationsForPDFPath:(NSString *)pdfPath;
 + (NSInteger)savedLastPageForPDFPath:(NSString *)pdfPath;
-+ (void)deleteAnnotationsForPath:(NSString *)itemPath isDirectory:(BOOL)isDirectory;
++ (BOOL)deleteLibraryItemAtPath:(NSString *)itemPath isDirectory:(BOOL)isDirectory error:(NSError **)error;
 + (void)moveAnnotationsFromPath:(NSString *)oldPath toPath:(NSString *)newPath isDirectory:(BOOL)isDirectory;
 
 @end
