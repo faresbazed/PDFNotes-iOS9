@@ -2,6 +2,8 @@
 
 Lightweight, native Objective-C PDF reader, handwritten annotator, and notebook app engineered specifically for **iPad 3 (`armv7` 32-bit, A5X SoC, 2048×1536 Retina display, 1 GB RAM) running iOS 9.0–9.3.6**.
 
+In the library, swipe left on a PDF or notebook and tap **Favorite**, or long-press it and choose **Add to Favorites**. Tap **Favorites** at the library root to search and sort starred documents from all folders; tap **All Items** to return. Renaming or moving a document in the app keeps its star. Duplicates start unstarred.
+
 ## Project Structure
 
 - `src/Models.h`, `src/Models.m` — `Stroke`, `TextNote`, `AnnotationStore` (single-load per-document store, 45-step Undo/Redo, bookmarks, reading position, atomic XML plist persistence, and library file-move/rename migration), and `PDFWeakTimerTarget`.

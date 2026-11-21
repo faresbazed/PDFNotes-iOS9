@@ -3,6 +3,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p build/tests
 clang $(gnustep-config --objc-flags) -I"$(gcc -print-file-name=include)" -Isrc \
+    tests/LibraryFavoritesTests.m src/LibraryFavorites.m -o build/tests/library-favorites-tests $(gnustep-config --base-libs)
+build/tests/library-favorites-tests
+clang $(gnustep-config --objc-flags) -I"$(gcc -print-file-name=include)" -Isrc \
     tests/AnnotationFilesTests.m src/AnnotationFiles.m -o build/tests/annotation-tests $(gnustep-config --base-libs)
 build/tests/annotation-tests
 clang $(gnustep-config --objc-flags) -I"$(gcc -print-file-name=include)" -Isrc \
