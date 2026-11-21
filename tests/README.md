@@ -1,34 +1,23 @@
-# Linux undo regressions
+# Linux model regression tests
 
 From the repository root:
 
 ```sh
-./tests/run.sh
-python3 tests/run_stroke_undo.py
+./tests/run.sh                     # Annotation files / keys (system GNUstep)
+python3 tests/run_stroke_undo.py    # Stroke undo (system GNUstep)
+./tests/run_drag_undo.sh            # Sticky-note drag undo (libobjc2/ARC GNUstep)
 ```
 
-Both tests require Python 3, clang and GNUstep Foundation. Neither requires an
-iOS SDK or tests rendering, disk persistence or UIKit behavior.
+All tests use clang and GNUstep Foundation; none requires an iOS SDK or tests
+rendering or UIKit behavior. The two GNUstep installations remain separate
+because Ubuntu's stock GCC runtime cannot compile the app's ARC/weak references.
 
-## Sticky-note drag undo (`run.sh`)
+## Annotation files (`run.sh`)
 
-Requires GNUstep Foundation built with **libobjc2/ARC**.
-`GNUSTEP_CONFIG` can select a different installation; the default is
-`$HOME/gnustep/System/Tools/gnustep-config`. Ubuntu's stock GNUstep uses the
-legacy GCC runtime and cannot compile the app's ARC/weak references.
-
-The test compiles the real `src/Models.m`, disabling disk I/O/debouncing via a
-store subclass. It also compiles the unmodified `noteBadgePanned:` method
-extracted from `src/PageView.m`, with small stand-ins for the badge, gesture,
-page coordinate conversion, and UIKit types. This prevents a model-only test
-from missing a mutation made by the caller before invoking the store. All
-shims are test-only; no iOS SDK or UI rendering is involved. Outputs go in
-`build/tests/`.
-
-The direct-store move/undo control distinguishes a caller ownership bug from
-an undo implementation bug. The regression exercises preview, ended and
-cancelled drags (both commit under existing behavior), undo/redo, and one-entry
-history, plus empty pages, missing IDs and nonfinite positions.
+Compiles the production Foundation-only annotation file helper used by
+AnnotationStore. Fixtures use a unique temporary Documents directory. Tests
+cover key escaping, deletion, renaming and migration, including collision and
+retry cases. Outputs go in `build/tests/annotation-tests`.
 
 ## Stroke undo (`run_stroke_undo.py`)
 
@@ -40,10 +29,31 @@ ivars/properties, a copyable stroke payload in place of UIKit geometry, and an
 in-memory store with persistence disabled. Generated files live in a temporary
 directory and are removed automatically.
 
+## Sticky-note drag undo (`run_drag_undo.sh`)
+
+Requires GNUstep Foundation built with **libobjc2/ARC**. `GNUSTEP_CONFIG` can
+select a different installation; the default is
+`$HOME/gnustep/System/Tools/gnustep-config`. The other runners use the system
+`gnustep-config` on `PATH` instead.
+
+Compiles the real `src/Models.m` and `src/AnnotationFiles.m`, disabling store
+disk I/O/debouncing via a subclass. It also compiles the unmodified
+`noteBadgePanned:` method extracted from `src/PageView.m`, with test-only
+stand-ins for the badge, gesture, page coordinate conversion and UIKit types.
+This prevents a model-only test from missing a mutation made by the caller
+before invoking the store. Outputs go in `build/tests/drag-undo` without
+overwriting the annotation test binary.
+
+The direct-store move/undo control distinguishes a caller ownership bug from
+an undo implementation bug. The regression exercises preview, ended and
+cancelled drags (both commit under existing behavior), undo/redo, and one-entry
+history, plus empty pages, missing IDs and nonfinite positions. It does not
+test disk persistence.
+
 ## One-time Ubuntu setup
 
 Install the shared tools and system Foundation first. This is sufficient for
-the stroke test:
+the annotation and stroke tests:
 
 ```sh
 sudo apt-get update
@@ -51,9 +61,8 @@ sudo apt-get install -y clang libgnustep-base-dev cmake ninja-build git libffi-d
 ```
 
 For the sticky-note test, also build an isolated ARC-capable Foundation in your
-home directory. It does not replace system libraries or change `PATH`, so the
-stroke harness continues to use the system installation. Run outside the
-repository:
+home directory. It does not replace system libraries or change the parent
+shell's `PATH`. Run outside the repository:
 
 ```sh
 mkdir -p "$HOME/gnustep-src"
@@ -84,7 +93,7 @@ make install
 )
 ```
 
-TLS/ICU are not needed for this in-memory regression. CMake may fetch the
+TLS/ICU are not needed for the sticky-note regression. CMake may fetch the
 libobjc2 robin-map dependency if it is not installed already.
 
 The app build remains `./build.sh` with the iOS SDK/toolchain installed.
