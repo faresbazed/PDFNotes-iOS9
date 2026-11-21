@@ -4,6 +4,7 @@
 #import "PDFDoc.h"
 #import "PDFIcons.h"
 #import "LibraryNames.h"
+#import "LibraryFiles.h"
 
 typedef NS_ENUM(NSInteger, LibrarySortOrder) {
     LibrarySortByName = 0,
@@ -217,40 +218,7 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
 #pragma mark - Inbox Import & Directory Scanning
 
 - (void)sweepInboxIfNeeded {
-    if (![self isRootLibrary]) return;
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSString *docs = [AnnotationStore documentsDirectory];
-    NSString *inbox = [docs stringByAppendingPathComponent:@"Inbox"];
-    BOOL isDir = NO;
-    if (![fm fileExistsAtPath:inbox isDirectory:&isDir] || !isDir) return;
-
-    NSArray<NSString *> *items = [fm contentsOfDirectoryAtPath:inbox error:NULL];
-    for (NSString *name in items) {
-        if ([name hasPrefix:@"."]) continue;
-        NSString *src = [inbox stringByAppendingPathComponent:name];
-        if (![[name.pathExtension lowercaseString] isEqualToString:@"pdf"]) {
-            [fm removeItemAtPath:src error:NULL];
-            continue;
-        }
-        NSString *dest = [self uniqueDestinationInDirectory:docs forFilename:name];
-        [fm moveItemAtPath:src toPath:dest error:NULL];
-    }
-}
-
-- (NSString *)uniqueDestinationInDirectory:(NSString *)dir forFilename:(NSString *)filename {
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSString *base = [filename stringByDeletingPathExtension];
-    NSString *ext = [filename pathExtension];
-    if (base.length == 0) base = @"Document";
-    NSString *candidate = [dir stringByAppendingPathComponent:filename];
-    NSInteger idx = 2;
-    while ([fm fileExistsAtPath:candidate]) {
-        NSString *numbered = ext.length > 0
-            ? [NSString stringWithFormat:@"%@-%ld.%@", base, (long)idx++, ext]
-            : [NSString stringWithFormat:@"%@-%ld", base, (long)idx++];
-        candidate = [dir stringByAppendingPathComponent:numbered];
-    }
-    return candidate;
+    if ([self isRootLibrary]) PDFImportInboxDocuments([AnnotationStore documentsDirectory]);
 }
 
 - (void)collectItemsInDirectory:(NSString *)dir
@@ -444,7 +412,7 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
         NSString *filename = [[rawName.pathExtension lowercaseString] isEqualToString:@"pdf"]
             ? rawName
             : [rawName stringByAppendingPathExtension:@"pdf"];
-        NSString *dest = [sSelf uniqueDestinationInDirectory:sSelf->_directoryPath forFilename:filename];
+        NSString *dest = PDFUniqueDestination(sSelf->_directoryPath, filename);
 
         NSError *err = nil;
         if ([PDFDoc createNotebookPDFAtPath:dest templateStyle:style pageCount:pages error:&err]) {
@@ -717,8 +685,15 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
     [ac addAction:[UIAlertAction actionWithTitle:@"Delete" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
         __strong typeof(self) sSelf = weakSelf;
         if (!sSelf) return;
-        [AnnotationStore deleteAnnotationsForPath:item.fullPath isDirectory:item.isDirectory];
-        [[NSFileManager defaultManager] removeItemAtPath:item.fullPath error:NULL];
+        NSError *error = nil;
+        if (![AnnotationStore deleteLibraryItemAtPath:item.fullPath isDirectory:item.isDirectory error:&error]) {
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Could Not Delete Item"
+                                                                           message:error.localizedDescription
+                                                                    preferredStyle:UIAlertControllerStyleAlert];
+            [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+            [sSelf presentViewController:alert animated:YES completion:nil];
+            return;
+        }
         [sSelf->_coverCache removeObjectForKey:item.fullPath];
         [sSelf->_pageCountCache removeObjectForKey:item.fullPath];
         [sSelf reloadFiles];
@@ -825,7 +800,7 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
             __strong typeof(self) sSelf = weakSelf;
             if (!sSelf) return;
             NSString *targetDir = dest[@"path"];
-            NSString *newPath = [sSelf uniqueDestinationInDirectory:targetDir forFilename:[item.fullPath lastPathComponent]];
+            NSString *newPath = PDFUniqueDestination(targetDir, [item.fullPath lastPathComponent]);
             if ([[NSFileManager defaultManager] moveItemAtPath:item.fullPath toPath:newPath error:NULL]) {
                 [AnnotationStore moveAnnotationsFromPath:item.fullPath toPath:newPath isDirectory:NO];
                 [sSelf reloadFiles];
@@ -845,7 +820,7 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
 - (void)duplicatePDFItem:(PDFLibraryItem *)item {
     NSString *parent = [item.fullPath stringByDeletingLastPathComponent];
     NSString *copyName = [NSString stringWithFormat:@"%@-Copy.pdf", item.name];
-    NSString *dest = [self uniqueDestinationInDirectory:parent forFilename:copyName];
+    NSString *dest = PDFUniqueDestination(parent, copyName);
     if ([[NSFileManager defaultManager] copyItemAtPath:item.fullPath toPath:dest error:NULL]) {
         NSString *oldAnn = [AnnotationStore annotationFilePathForPDFPath:item.fullPath];
         NSString *newAnn = [AnnotationStore annotationFilePathForPDFPath:dest];

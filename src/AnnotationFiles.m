@@ -92,6 +92,12 @@ void PDFDeleteAnnotations(NSString *itemPath, BOOL isDirectory, NSString *docume
     }
 }
 
+BOOL PDFDeleteLibraryItem(NSString *path, BOOL directory, NSString *documents, NSUserDefaults *defaults, NSError **error) {
+    if (![[NSFileManager defaultManager] removeItemAtPath:path error:error]) return NO;
+    PDFDeleteAnnotations(path, directory, documents, defaults);
+    return YES;
+}
+
 void PDFMoveAnnotations(NSString *oldPath, NSString *newPath, BOOL isDirectory, NSString *documents, NSUserDefaults *defaults) {
     NSFileManager *fm = [NSFileManager defaultManager];
     if (!isDirectory) {

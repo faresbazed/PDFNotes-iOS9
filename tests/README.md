@@ -27,6 +27,10 @@ There is no source extraction. UIKit caller wiring, filesystem operations and
 alert presentation are not exercised by these unit tests. Create continues to
 reject reserved names at all levels.
 
+The library file tests exercise actual Inbox moves, external copies, and PDF
+and folder deletion in a temporary library. Run as a non-root user to also
+exercise denied writes and deletes; root can bypass directory permissions.
+
 ## Stroke undo (`run_stroke_undo.py`)
 
 Uses the system `gnustep-config` on `PATH` and Ubuntu's stock GNUstep/GCC
