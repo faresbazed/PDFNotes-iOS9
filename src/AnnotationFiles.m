@@ -159,13 +159,14 @@ void PDFMigrateAnnotations(NSString *documents, NSUserDefaults *defaults) {
         id page = [oldDefaults objectForKey:oldDefault];
         BOOL copied = YES;
         for (NSString *key in [claimants objectForKey:legacy]) {
+            BOOL destinationIsLegacy = [claimants objectForKey:key] != nil;
             NSString *dest = [annDir stringByAppendingPathComponent:[key stringByAppendingPathExtension:@"plist"]];
-            if (data && ![fm fileExistsAtPath:dest] && ![data writeToFile:dest atomically:YES]) {
+            if (data && (destinationIsLegacy || ![fm fileExistsAtPath:dest]) && ![data writeToFile:dest atomically:YES]) {
                 success = NO;
                 copied = NO;
             }
             NSString *newDefault = [@"lastPage." stringByAppendingString:key];
-            if (page && ![defaults objectForKey:newDefault]) [defaults setObject:page forKey:newDefault];
+            if (page && (destinationIsLegacy || ![defaults objectForKey:newDefault])) [defaults setObject:page forKey:newDefault];
         }
         if (data && copied) [migratedFiles addObject:legacy];
         if (page) [migratedDefaults addObject:legacy];

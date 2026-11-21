@@ -61,8 +61,19 @@ int main(void) {
         PDFDeleteAnnotations(@"/outside", YES, docs, defaults);
         PDFMoveAnnotations(@"/outside", renamed, YES, docs, defaults);
         Check([fm fileExistsAtPath:File(docs, rk)], "outside paths ignored");
+        [defaults removeObjectForKey:@"annotationKeysPercentEscapedV1"];
+        Write([docs stringByAppendingPathComponent:@"Course%2FLecture.pdf"]);
+        [@"nested" writeToFile:File(docs, @"Course__Lecture.pdf") atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+        [@"percent-root" writeToFile:File(docs, @"Course%2FLecture.pdf") atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+        [defaults setInteger:11 forKey:@"lastPage.Course__Lecture.pdf"];
+        [defaults setInteger:22 forKey:@"lastPage.Course%2FLecture.pdf"];
+        PDFMigrateAnnotations(docs, defaults);
+        Check([[NSString stringWithContentsOfFile:File(docs, @"Course%2FLecture.pdf") encoding:NSUTF8StringEncoding error:NULL] isEqual:@"nested"] &&
+              [[NSString stringWithContentsOfFile:File(docs, @"Course%252FLecture.pdf") encoding:NSUTF8StringEncoding error:NULL] isEqual:@"percent-root"], "migration disambiguates destination that is another legacy file");
+        Check([defaults integerForKey:@"lastPage.Course%2FLecture.pdf"] == 11 &&
+              [defaults integerForKey:@"lastPage.Course%252FLecture.pdf"] == 22, "migration disambiguates destination that is another legacy default");
         [fm removeItemAtPath:docs error:NULL];
-        for (NSString *key in @[@"annotationKeysPercentEscapedV1", @"lastPage.Course__Lecture.pdf", @"lastPage.Course%2FLecture.pdf", @"lastPage.Renamed%2FLecture.pdf", @"lastPage.Course%2FOnly.pdf"]) [defaults removeObjectForKey:key];
+        for (NSString *key in @[@"annotationKeysPercentEscapedV1", @"lastPage.Course__Lecture.pdf", @"lastPage.Course%2FLecture.pdf", @"lastPage.Course%252FLecture.pdf", @"lastPage.Renamed%2FLecture.pdf", @"lastPage.Course%2FOnly.pdf"]) [defaults removeObjectForKey:key];
     }
     printf("%d failure(s)\n", failures);
     return failures ? 1 : 0;
