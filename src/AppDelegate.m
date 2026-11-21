@@ -5,6 +5,7 @@
 @implementation AppDelegate
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+    [AnnotationStore migrateLegacyAnnotationKeysIfNeeded];
     self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
     self.library = [[LibraryViewController alloc] init];
     self.nav = [[UINavigationController alloc] initWithRootViewController:self.library];

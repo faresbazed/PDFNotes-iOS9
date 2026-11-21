@@ -1,12 +1,23 @@
-# Linux model regression
+# Linux model regression tests
 
 Install dependencies and run from the repository root:
 
 ```sh
 sudo apt-get update
 sudo apt-get install -y clang libgnustep-base-dev
-python3 tests/run_stroke_undo.py
 ```
+
+## Annotation files
+
+Run: `tests/run.sh`
+
+Tests compile the same Foundation-only annotation file helper used by
+AnnotationStore; UIKit is not required. Fixtures use a unique temporary
+Documents directory.
+
+## Stroke undo
+
+Run: `python3 tests/run_stroke_undo.py`
 
 The runner extracts the production stroke/history methods from `src/Models.m`
 at runtime, compiles them with GNUstep Foundation, and executes the assertions.
