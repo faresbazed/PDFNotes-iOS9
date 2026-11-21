@@ -702,7 +702,7 @@ static const NSUInteger kMaxUndoSteps = 45;
 - (void)addStroke:(Stroke *)stroke onPage:(NSInteger)pageIndex {
     if (!stroke || stroke.points.count == 0) return;
     NSString *pk = [NSString stringWithFormat:@"%ld", (long)pageIndex];
-    NSArray<Stroke *> *before = _strokesByPage[pk] ?: @[];
+    NSArray<Stroke *> *before = [_strokesByPage[pk] copy] ?: @[];
     NSArray<TextNote *> *notes = _notesByPage[pk] ?: @[];
 
     NSMutableArray<Stroke *> *list = _strokesByPage[pk];
