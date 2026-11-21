@@ -3,6 +3,7 @@
 #import "Models.h"
 #import "PDFDoc.h"
 #import "PDFIcons.h"
+#import "LibraryNames.h"
 
 typedef NS_ENUM(NSInteger, LibrarySortOrder) {
     LibrarySortByName = 0,
@@ -466,13 +467,23 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
         __strong typeof(self) sSelf = weakSelf;
         if (!sSelf) return;
         NSString *folderName = [sSelf sanitizeFilename:ac.textFields.firstObject.text];
-        if (folderName.length == 0 || [folderName isEqualToString:@"Annotations"] || [folderName isEqualToString:@"Inbox"]) {
+        if (folderName.length == 0) return;
+        if (PDFLibraryNameIsReserved(folderName)) {
+            [sSelf showReservedNameAlert];
             return;
         }
         NSString *target = [sSelf->_directoryPath stringByAppendingPathComponent:folderName];
         [[NSFileManager defaultManager] createDirectoryAtPath:target withIntermediateDirectories:NO attributes:nil error:NULL];
         [sSelf reloadFiles];
     }]];
+    [self presentViewController:ac animated:YES completion:nil];
+}
+
+- (void)showReservedNameAlert {
+    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"Reserved Name"
+                                                                message:@"Please choose a different name. Inbox and Annotations are reserved for the app."
+                                                         preferredStyle:UIAlertControllerStyleAlert];
+    [ac addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:ac animated:YES completion:nil];
 }
 
@@ -733,6 +744,11 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
         NSString *newFilename = item.isDirectory
             ? clean
             : ([[clean.pathExtension lowercaseString] isEqualToString:@"pdf"] ? clean : [clean stringByAppendingPathExtension:@"pdf"]);
+        if ([[parent stringByResolvingSymlinksInPath] isEqualToString:[[AnnotationStore documentsDirectory] stringByResolvingSymlinksInPath]] &&
+            PDFLibraryNameIsReserved(newFilename)) {
+            [sSelf showReservedNameAlert];
+            return;
+        }
         NSString *newPath = [parent stringByAppendingPathComponent:newFilename];
         if ([newPath isEqualToString:item.fullPath]) return;
 

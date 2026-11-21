@@ -19,6 +19,14 @@ AnnotationStore. Fixtures use a unique temporary Documents directory. Tests
 cover key escaping, deletion, renaming and migration, including collision and
 retry cases. Outputs go in `build/tests/annotation-tests`.
 
+`run.sh` also runs `run_library_names.py`, which extracts the production rename
+handler, filename sanitizer, unique destination and Inbox sweep into a
+Foundation-only fixture linked to `LibraryNames.m` and `AnnotationFiles.m`.
+It checks reserved root names (including case variants), normal/empty/error
+renames, nested folders, and the scout's rename-then-sweep data-loss repro.
+UIKit alert presentation is not exercised. Create's shared-helper call is
+checked in the runner; create continues to reject reserved names at all levels.
+
 ## Stroke undo (`run_stroke_undo.py`)
 
 Uses the system `gnustep-config` on `PATH` and Ubuntu's stock GNUstep/GCC
