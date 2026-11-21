@@ -2,6 +2,7 @@
 #import <math.h>
 
 static CGFloat gMainScreenScale = 2.0f;
+static const NSUInteger kLivePenSegmentPoints = 64;
 
 static CGFloat PDFClamp(CGFloat v, CGFloat lo, CGFloat hi) {
     if (!isfinite(v)) return lo;
@@ -48,6 +49,7 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
                                    CGFloat scale,
                                    CGRect trim,
                                    PDFReadingTheme theme,
+                                   UIImage *base,
                                    NSArray<Stroke *> *strokes,
                                    PDFCancelToken *token) {
     if (size.width < 2.0f || size.height < 2.0f || strokes.count == 0) {
@@ -66,6 +68,7 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
             return nil;
         }
 
+        [base drawInRect:(CGRect){CGPointZero, size}];
         for (Stroke *s in strokes) {
             if (token && token.isCancelled) {
                 UIGraphicsEndImageContext();
@@ -148,11 +151,14 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     UIImageView *_imageView;
     UIImageView *_inkImageView;
     UIView *_notesContainer;
+    CALayer *_liveContainer;
     CAShapeLayer *_liveLayer;
     CAShapeLayer *_eraserRingLayer;
     UILabel *_bannerLabel;
 
-    UIImage *_inkImage;
+    NSMutableArray<CALayer *> *_pendingInkLayers;
+    NSUInteger _bakedStrokeCount; // NSNotFound: the displayed bitmap is not a usable prefix.
+    CGFloat _inkZoomScale;
     NSMutableArray<Stroke *> *_strokes;
     NSMutableArray<TextNote *> *_notes;
     NSMutableArray<PDFNoteBadgeView *> *_noteViews;
@@ -165,8 +171,8 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     CGFloat _renderedPixelWidth;
     PDFReadingTheme _renderedTheme;
     CGRect _renderedTrim;
-    CGSize _renderedInkBoundsSize;
-    CGFloat _renderedInkScale;
+    CGSize _inkTargetSize;
+    CGFloat _inkTargetScale;
 
     // Active drawing / erasing touch state
     UITouch *_activeTouch;
@@ -180,9 +186,10 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     CGPoint _lastSmoothedMidPt;
     CGPoint _prevLiveViewPt;
     NSUInteger _livePointCount;
+    NSUInteger _segmentPointCount;
     BOOL _snappedToStraightLine;
     NSTimer *_lineSnapTimer;
-    CGPoint _stationaryCheckPt;
+    CFTimeInterval _snapDeadline;
 
     // Staged eraser indices (only committed on touchesEnded so 2-finger scroll/pinch NEVER erases!)
     NSMutableIndexSet *_stagedErasedIndices;
@@ -223,6 +230,8 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
         _strokes = [NSMutableArray array];
         _notes = [NSMutableArray array];
         _noteViews = [NSMutableArray array];
+        _pendingInkLayers = [NSMutableArray array];
+        _inkZoomScale = 1.0f;
         _stagedErasedIndices = [NSMutableIndexSet indexSet];
 
         self.clipsToBounds = YES;
@@ -246,14 +255,6 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
         _inkImageView.userInteractionEnabled = NO;
         [self addSubview:_inkImageView];
         [self updateInkBlendMode];
-
-        _liveLayer = [CAShapeLayer layer];
-        _liveLayer.fillColor = NULL;
-        _liveLayer.lineCap = kCALineCapRound;
-        _liveLayer.lineJoin = kCALineJoinRound;
-        _liveLayer.contentsScale = gMainScreenScale;
-        _liveLayer.frame = self.bounds;
-        [self.layer addSublayer:_liveLayer];
 
         _eraserRingLayer = [CAShapeLayer layer];
         _eraserRingLayer.fillColor = [UIColor colorWithWhite:1.0f alpha:0.25f].CGColor;
@@ -307,21 +308,23 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     _theme = theme;
     [self updateBackdropForTheme];
     [self updateInkBlendMode];
+    [self invalidateInkBitmap];
 }
 
 - (void)setTrim:(CGRect)trim {
     CGRect safe = (trim.size.width > 0.005f && trim.size.height > 0.005f) ? trim : CGRectMake(0.0f, 0.0f, 1.0f, 1.0f);
     if (CGRectEqualToRect(_trim, safe)) return;
     _trim = safe;
+    [self invalidateInkBitmap];
     [self setNeedsLayout];
 }
 
 - (void)layoutSubviews {
     [super layoutSubviews];
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    _liveLayer.frame = self.bounds;
-    [CATransaction commit];
+    if ((_inkImageView.image || _inkRenderToken || _pendingInkLayers.count) &&
+        !CGSizeEqualToSize(self.bounds.size, _inkTargetSize)) {
+        [self scheduleInkRender];
+    }
     [self layoutNoteBadges];
 }
 
@@ -365,7 +368,7 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     if (maxSide * desired > 2200.0f) {
         desired = 2200.0f / maxSide;
     }
-    return MAX(1.0f, desired);
+    return desired;
 }
 
 #pragma mark - Store Sync & Note Badges
@@ -376,14 +379,7 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     _notes = [[_store notesForPage:_pageIndex] mutableCopy] ?: [NSMutableArray array];
     [self rebuildNoteBadges];
 
-    if (_strokes.count == 0) {
-        [_inkRenderToken cancel];
-        _inkRenderToken = nil;
-        _inkImage = nil;
-        _inkImageView.image = nil;
-    } else if (!CGRectIsEmpty(self.bounds)) {
-        [self rebuildInkImageNow];
-    }
+    [self invalidateInkBitmap];
 }
 
 - (void)rebuildNoteBadges {
@@ -509,123 +505,85 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
         return;
     }
 
-    [self ensureInkImageForZoomScale:clampedZoom];
+    _inkZoomScale = clampedZoom;
+    [self scheduleInkRender];
 }
 
-- (void)ensureInkImageForZoomScale:(CGFloat)zoomScale {
-    if (_strokes.count == 0 || CGRectIsEmpty(self.bounds)) {
-        _inkImage = nil;
-        _inkImageView.image = nil;
-        return;
+- (void)removePendingInkLayers:(NSUInteger)count {
+    for (NSUInteger i = 0; i < count; i++) {
+        [_pendingInkLayers[i] removeFromSuperlayer];
+    }
+    [_pendingInkLayers removeObjectsInRange:NSMakeRange(0, count)];
+}
+
+- (void)invalidateInkBitmap {
+    [_inkRenderToken cancel];
+    _bakedStrokeCount = NSNotFound;
+    [self scheduleInkRender];
+}
+
+- (void)scheduleInkRender {
+    CGSize sz = self.bounds.size;
+    CGFloat scale = [self inkBitmapScaleForZoom:_inkZoomScale];
+    if (!CGSizeEqualToSize(sz, _inkTargetSize) || scale != _inkTargetScale) {
+        [_inkRenderToken cancel];
+        _bakedStrokeCount = NSNotFound;
+        _inkTargetSize = sz;
+        _inkTargetScale = scale;
     }
 
-    CGFloat targetScale = [self inkBitmapScaleForZoom:zoomScale];
-    CGSize sz = self.bounds.size;
-    BOOL needsInk = (!_inkImage) ||
-                    (fabs((double)(sz.width - _renderedInkBoundsSize.width)) > 2.0) ||
-                    (fabs((double)(sz.height - _renderedInkBoundsSize.height)) > 2.0) ||
-                    (fabs((double)(targetScale - _renderedInkScale)) > 0.25);
+    NSUInteger count = _strokes.count;
+    if (count == _stagedErasedIndices.count || sz.width < 2.0f || sz.height < 2.0f) {
+        [_inkRenderToken cancel];
+        _inkImageView.image = nil;
+        [self removePendingInkLayers:_pendingInkLayers.count];
+        _bakedStrokeCount = count == 0 ? 0 : NSNotFound;
+        return;
+    }
+    if (_inkRenderToken || _bakedStrokeCount == count) return;
 
-    if (!needsInk || _inkRenderToken) return;
-
+    // The base is valid only for append-only edits. Finished strokes are never mutated.
+    UIImage *base = nil;
+    NSArray<Stroke *> *snap;
+    if (_bakedStrokeCount == NSNotFound) {
+        NSMutableArray *visible = [_strokes mutableCopy];
+        [visible removeObjectsAtIndexes:_stagedErasedIndices];
+        snap = visible;
+    } else {
+        base = _inkImageView.image;
+        snap = [_strokes subarrayWithRange:NSMakeRange(_bakedStrokeCount, count - _bakedStrokeCount)];
+    }
+    NSUInteger coveredLayers = _pendingInkLayers.count;
+    CGRect trim = [self safeTrim];
+    PDFReadingTheme theme = _theme;
     PDFCancelToken *token = [[PDFCancelToken alloc] init];
     _inkRenderToken = token;
-    NSArray<Stroke *> *snap = [self visibleStrokesExcludingStaged];
-    CGRect curTrim = [self safeTrim];
-    PDFReadingTheme curTheme = _theme;
 
     __weak typeof(self) weakSelf = self;
     dispatch_async([PDFDoc renderQueue], ^{
-        if (token.isCancelled) return;
-        UIImage *img = PDFRenderInkBitmap(sz, targetScale, curTrim, curTheme, snap, token);
-        if (token.isCancelled) return;
-
+        UIImage *img = PDFRenderInkBitmap(sz, scale, trim, theme, base, snap, token);
         dispatch_async(dispatch_get_main_queue(), ^{
-            __strong typeof(self) sSelf = weakSelf;
-            if (!sSelf || sSelf->_inkRenderToken != token || token.isCancelled) return;
-            sSelf->_inkRenderToken = nil;
-            sSelf->_inkImage = img;
-            sSelf->_inkImageView.image = img;
-            sSelf->_renderedInkBoundsSize = sz;
-            sSelf->_renderedInkScale = targetScale;
+            __strong typeof(self) page = weakSelf;
+            if (!page || page->_inkRenderToken != token) return;
+            page->_inkRenderToken = nil;
+            if (!token.isCancelled && CGSizeEqualToSize(sz, page.bounds.size)) {
+                // Allocation failure: keep the visible ink and retry on the next request.
+                if (!img) return;
+                [CATransaction begin];
+                [CATransaction setDisableActions:YES];
+                page->_inkImageView.image = img;
+                [page removePendingInkLayers:coveredLayers];
+                page->_bakedStrokeCount = count;
+                [CATransaction commit];
+            }
+            // Coalesce edits made during this job, including cancellation/reload.
+            [page scheduleInkRender];
         });
     });
 }
 
-- (NSArray<Stroke *> *)visibleStrokesExcludingStaged {
-    if (_stagedErasedIndices.count == 0) {
-        return [_strokes copy];
-    }
-    NSMutableArray<Stroke *> *filtered = [NSMutableArray arrayWithCapacity:_strokes.count];
-    for (NSUInteger i = 0; i < _strokes.count; i++) {
-        if (![_stagedErasedIndices containsIndex:i]) {
-            [filtered addObject:_strokes[i]];
-        }
-    }
-    return filtered;
-}
-
-- (void)rebuildInkImageNow {
-    [_inkRenderToken cancel];
-    _inkRenderToken = nil;
-
-    NSArray<Stroke *> *visible = [self visibleStrokesExcludingStaged];
-    if (visible.count == 0 || CGRectIsEmpty(self.bounds)) {
-        _inkImage = nil;
-        _inkImageView.image = nil;
-        return;
-    }
-
-    CGFloat scale = (_renderedInkScale >= 1.0f) ? _renderedInkScale : [self inkBitmapScaleForZoom:1.0f];
-    _inkImage = nil;
-    _inkImageView.image = nil;
-    _inkImage = PDFRenderInkBitmap(self.bounds.size, scale, [self safeTrim], _theme, visible, nil);
-    _inkImageView.image = _inkImage;
-    _renderedInkBoundsSize = self.bounds.size;
-    _renderedInkScale = scale;
-}
-
-- (void)bakeStrokeIntoInk:(Stroke *)stroke {
-    if (!stroke || CGRectIsEmpty(self.bounds)) return;
-
-    if (_inkRenderToken || (!_inkImage && _strokes.count >= 2)) {
-        [self rebuildInkImageNow];
-        return;
-    }
-
-    @autoreleasepool {
-        CGSize sz = self.bounds.size;
-        CGFloat scale = (_renderedInkScale >= 1.0f) ? _renderedInkScale : [self inkBitmapScaleForZoom:1.0f];
-        CGRect t = [self safeTrim];
-
-        UIGraphicsBeginImageContextWithOptions(sz, NO, scale);
-        CGContextRef ctx = UIGraphicsGetCurrentContext();
-        if (ctx) {
-            if (_inkImage) {
-                [_inkImage drawInRect:CGRectMake(0.0f, 0.0f, sz.width, sz.height)];
-            }
-            CGContextSaveGState(ctx);
-            UIBezierPath *path = [stroke pathWithPointMap:^CGPoint(CGPoint np) {
-                return CGPointMake(((np.x - t.origin.x) / t.size.width) * sz.width,
-                                   ((np.y - t.origin.y) / t.size.height) * sz.height);
-            }];
-            path.lineWidth = [self viewWidthForFraction:stroke.widthFraction inSize:sz];
-            CGContextSetAlpha(ctx, (_theme == PDFReadingThemeNight && stroke.kind == StrokeKindMarker) ? 0.44f : [stroke alpha]);
-            [stroke.color setStroke];
-            [path stroke];
-            CGContextRestoreGState(ctx);
-
-            UIImage *newImg = UIGraphicsGetImageFromCurrentImageContext();
-            _inkImage = newImg;
-            _inkImageView.image = newImg;
-            _renderedInkBoundsSize = sz;
-            _renderedInkScale = scale;
-        }
-        UIGraphicsEndImageContext();
-    }
-}
-
 - (void)releaseContent {
+    [_stagedErasedIndices removeAllIndexes];
     [self cancelActiveTouchIfNeeded];
 
     [_pdfRenderToken cancel];
@@ -635,9 +593,9 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
 
     [_inkRenderToken cancel];
     _inkRenderToken = nil;
-    _inkImage = nil;
     _inkImageView.image = nil;
-    _renderedInkBoundsSize = CGSizeZero;
+    [self removePendingInkLayers:_pendingInkLayers.count];
+    _bakedStrokeCount = NSNotFound;
 }
 
 #pragma mark - Search Match Banner Pulse
@@ -678,6 +636,30 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     return (_tool == ReaderToolPen || _tool == ReaderToolMarker || _tool == ReaderToolEraser || _tool == ReaderToolNote);
 }
 
+- (CAShapeLayer *)newLiveSegment {
+    CAShapeLayer *segment = [CAShapeLayer layer];
+    segment.fillColor = NULL;
+    segment.lineCap = kCALineCapRound;
+    segment.lineJoin = kCALineJoinRound;
+    segment.contentsScale = gMainScreenScale;
+    segment.frame = self.bounds;
+    CGFloat alpha = (_currentStroke.kind == StrokeKindMarker && _theme == PDFReadingThemeNight)
+                  ? 0.44f : _currentStroke.alpha;
+    segment.strokeColor = [_currentStroke.color colorWithAlphaComponent:alpha].CGColor;
+    segment.lineWidth = [self viewWidthForFraction:_currentStroke.widthFraction inSize:self.bounds.size];
+    [_liveContainer addSublayer:segment];
+    return segment;
+}
+
+- (void)cropFinishedSegment {
+    CGRect box = CGPathGetBoundingBox(_liveLayer.path);
+    if (CGRectIsNull(box)) return;
+    CGFloat pad = ceil(_liveLayer.lineWidth * 0.5f) + 1.0f;
+    box = CGRectIntegral(CGRectInset(box, -pad, -pad));
+    _liveLayer.bounds = box;
+    _liveLayer.position = CGPointMake(CGRectGetMidX(box), CGRectGetMidY(box));
+}
+
 - (void)clearLiveLayer {
     [_lineSnapTimer invalidate];
     _lineSnapTimer = nil;
@@ -690,7 +672,9 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     }
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    _liveLayer.path = NULL;
+    [_liveContainer removeFromSuperlayer];
+    _liveContainer = nil;
+    _liveLayer = nil;
     _eraserRingLayer.hidden = YES;
     [CATransaction commit];
 }
@@ -705,33 +689,37 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
 
     if (_stagedErasedIndices.count > 0) {
         [_stagedErasedIndices removeAllIndexes];
-        [self rebuildInkImageNow];
+        [self invalidateInkBitmap];
     }
     _eraserMovedEnough = NO;
 }
 
 - (void)scheduleStraightLineSnapCheck:(CGPoint)latestPt {
-    [_lineSnapTimer invalidate];
-    _lineSnapTimer = nil;
-    if (!_snapStraightLines || !_currentStroke || _snappedToStraightLine) return;
-
     CGFloat dx = latestPt.x - _touchStartViewPt.x;
     CGFloat dy = latestPt.y - _touchStartViewPt.y;
-    if ((dx * dx + dy * dy) < (22.0f * 22.0f)) return;
+    if (!_snapStraightLines || !_currentStroke || _snappedToStraightLine ||
+        (dx * dx + dy * dy) < (22.0f * 22.0f)) {
+        [_lineSnapTimer invalidate];
+        _lineSnapTimer = nil;
+        return;
+    }
+    _snapDeadline = CACurrentMediaTime() + 0.42;
+    if (!_lineSnapTimer) [self armSnapTimerAfter:0.42];
+}
 
-    _stationaryCheckPt = latestPt;
-    _lineSnapTimer = [PDFWeakTimerTarget scheduledTimerWithTimeInterval:0.42
-                                                                 target:self
-                                                               selector:@selector(lineSnapTimerFired:)
-                                                                repeats:NO];
+- (void)armSnapTimerAfter:(NSTimeInterval)delay {
+    _lineSnapTimer = [PDFWeakTimerTarget scheduledTimerWithTimeInterval:delay target:self
+                                                               selector:@selector(lineSnapTimerFired:) repeats:NO];
 }
 
 - (void)lineSnapTimerFired:(NSTimer *)timer {
     _lineSnapTimer = nil;
-    if (!_currentStroke || !_activeTouch || _snappedToStraightLine) return;
-    CGFloat dx = _lastTouchViewPt.x - _stationaryCheckPt.x;
-    CGFloat dy = _lastTouchViewPt.y - _stationaryCheckPt.y;
-    if ((dx * dx + dy * dy) > 16.0f) return;
+    if (!_currentStroke || !_activeTouch || _snappedToStraightLine || !_snapStraightLines) return;
+    CFTimeInterval remaining = _snapDeadline - CACurrentMediaTime();
+    if (remaining > 0.0) {
+        [self armSnapTimerAfter:remaining];
+        return;
+    }
 
     _snappedToStraightLine = YES;
     [self updateSnappedStraightLineToViewPoint:_lastTouchViewPt];
@@ -751,6 +739,11 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
 
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
+    // A snapped line replaces the entire freehand stroke, not just its last segment.
+    if (_liveContainer.sublayers.count > 1) {
+        _liveContainer.sublayers = nil;
+        [_liveContainer addSublayer:_liveLayer];
+    }
     _liveLayer.path = line.CGPath;
     [CATransaction commit];
 }
@@ -825,15 +818,15 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     _prevLiveViewPt = p;
     _lastSmoothedMidPt = p;
     _livePointCount = 1;
+    _segmentPointCount = 1;
     _snappedToStraightLine = NO;
 
-    CGFloat strokeAlpha = (_tool == ReaderToolMarker) ? ((_theme == PDFReadingThemeNight) ? 0.44f : 0.38f) : 1.0f;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    // Bake alpha into strokeColor so `_liveLayer.opacity` stays 1.0 (avoids A5X full-page offscreen group-opacity buffer!)
-    _liveLayer.opacity = 1.0f;
-    _liveLayer.strokeColor = [_currentStroke.color colorWithAlphaComponent:strokeAlpha].CGColor;
-    _liveLayer.lineWidth = [self viewWidthForFraction:_currentStroke.widthFraction inSize:self.bounds.size];
+    _liveContainer = [CALayer layer];
+    _liveContainer.frame = self.bounds;
+    [self.layer insertSublayer:_liveContainer below:_eraserRingLayer];
+    _liveLayer = [self newLiveSegment];
     _liveLayer.path = _liveCGPath;
     [CATransaction commit];
 }
@@ -885,7 +878,7 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
         }
         [self updateEraserRingAtPoint:_lastTouchViewPt visible:YES];
         if (newlyStaged) {
-            [self rebuildInkImageNow];
+            [self invalidateInkBitmap];
         }
         return;
     }
@@ -923,6 +916,7 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
         _prevLiveViewPt = p;
         _lastSmoothedMidPt = mid;
         _livePointCount++;
+        _segmentPointCount++;
         _lastTouchViewPt = p;
         addedAny = YES;
     }
@@ -931,6 +925,16 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
         _liveLayer.path = _liveCGPath;
+        // Freeze opaque segments so extending a long pen stroke only republishes its tail.
+        // Keep translucent markers in one path: overlapping round caps would darken joins.
+        if (_currentStroke.kind == StrokeKindPen && _segmentPointCount >= kLivePenSegmentPoints) {
+            [self cropFinishedSegment];
+            _liveLayer = [self newLiveSegment];
+            CGPathRelease(_liveCGPath);
+            _liveCGPath = CGPathCreateMutable();
+            CGPathMoveToPoint(_liveCGPath, NULL, _lastSmoothedMidPt.x, _lastSmoothedMidPt.y);
+            _segmentPointCount = 0;
+        }
         [CATransaction commit];
         [self scheduleStraightLineSnapCheck:_lastTouchViewPt];
     }
@@ -966,7 +970,7 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
             [_stagedErasedIndices removeAllIndexes];
             _strokes = remaining;
             [_store replaceStrokes:_strokes onPage:_pageIndex];
-            [self rebuildInkImageNow];
+            [self invalidateInkBitmap];
             [self.delegate pageViewDidChangeAnnotations:self];
         }
         _eraserMovedEnough = NO;
@@ -975,19 +979,28 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     }
 
     if (_currentStroke) {
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
         if (!_snappedToStraightLine && _livePointCount >= 2) {
             [_currentStroke addNormalizedPoint:[self normalisedPointForViewPoint:endPt]];
+            CGPathAddQuadCurveToPoint(_liveCGPath, NULL, _prevLiveViewPt.x, _prevLiveViewPt.y, endPt.x, endPt.y);
+            _liveLayer.path = _liveCGPath;
         }
         Stroke *finished = _currentStroke;
         _currentStroke = nil;
-        [self clearLiveLayer];
 
         if (finished.points.count > 0) {
+            [self cropFinishedSegment];
+            [_inkImageView.layer addSublayer:_liveContainer];
+            [_pendingInkLayers addObject:_liveContainer];
+            _liveContainer = nil; // The bitmap completion retires this overlay.
             [_strokes addObject:finished];
             [_store addStroke:finished onPage:_pageIndex];
-            [self bakeStrokeIntoInk:finished];
+            [self scheduleInkRender];
             [self.delegate pageViewDidChangeAnnotations:self];
         }
+        [self clearLiveLayer];
+        [CATransaction commit];
     }
     [self.delegate pageViewDidInteract:self];
 }

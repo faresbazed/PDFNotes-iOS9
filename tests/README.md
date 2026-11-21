@@ -5,6 +5,7 @@ From the repository root:
 ```sh
 ./tests/run.sh                     # Library favorites, names and annotation files (system GNUstep)
 python3 tests/run_stroke_undo.py    # Stroke undo (system GNUstep)
+./tests/run_ink_render.sh          # Ink render scheduling (system GNUstep)
 ./tests/run_drag_undo.sh            # Sticky-note drag undo (libobjc2/ARC GNUstep)
 ```
 
@@ -33,9 +34,17 @@ Uses the system `gnustep-config` on `PATH` and Ubuntu's stock GNUstep/GCC
 runtime. The runner extracts production stroke/history methods from
 `src/Models.m`, desugars dictionary subscripting for the legacy runtime, and
 compiles and executes the assertions. The fixture supplies legacy-runtime
-ivars/properties, a copyable stroke payload in place of UIKit geometry, and an
+ivars/properties, a copy-counting stroke payload in place of UIKit geometry, and an
 in-memory store with persistence disabled. Generated files live in a temporary
 directory and are removed automatically.
+
+## Ink render scheduling (`run_ink_render.sh`)
+
+Runs the production PageView scheduling, invalidation and release methods with a
+controlled dispatcher. Images are ordered lists of stroke IDs; an edit can be
+injected after a worker finishes but before its result reaches the UI. This
+exercises append coalescing, staged erase/cancel, clear, eviction, resize, and
+allocation failure. It does not test UIKit pixels, frame rate or touch latency.
 
 ## Sticky-note drag undo (`run_drag_undo.sh`)
 

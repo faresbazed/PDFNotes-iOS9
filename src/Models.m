@@ -317,6 +317,7 @@ static void PDFExtractRGB(UIColor *color, CGFloat *outR, CGFloat *outG, CGFloat 
 
 @interface PDFPageEditAction : NSObject
 @property (nonatomic, assign) NSInteger pageIndex;
+@property (nonatomic, strong) Stroke *appendedStroke;
 @property (nonatomic, strong) NSArray<Stroke *> *beforeStrokes;
 @property (nonatomic, strong) NSArray<Stroke *> *afterStrokes;
 @property (nonatomic, strong) NSArray<TextNote *> *beforeNotes;
@@ -585,6 +586,10 @@ static const NSUInteger kMaxUndoSteps = 45;
     act.beforeNotes = [[self class] deepCopyNotes:beforeNotes];
     act.afterNotes = [[self class] deepCopyNotes:afterNotes];
 
+    [self pushEditAction:act];
+}
+
+- (void)pushEditAction:(PDFPageEditAction *)act {
     [_undoStack addObject:act];
     if (_undoStack.count > kMaxUndoSteps) {
         [_undoStack removeObjectAtIndex:0];
@@ -634,16 +639,16 @@ static const NSUInteger kMaxUndoSteps = 45;
 - (void)addStroke:(Stroke *)stroke onPage:(NSInteger)pageIndex {
     if (!stroke || stroke.points.count == 0) return;
     NSString *pk = [NSString stringWithFormat:@"%ld", (long)pageIndex];
-    NSArray<Stroke *> *before = [_strokesByPage[pk] copy] ?: @[];
-    NSArray<TextNote *> *notes = _notesByPage[pk] ?: @[];
-
     NSMutableArray<Stroke *> *list = _strokesByPage[pk];
     if (!list) {
         list = [NSMutableArray array];
         _strokesByPage[pk] = list;
     }
     [list addObject:[stroke copy]];
-    [self pushUndoForPage:pageIndex beforeStrokes:before afterStrokes:list beforeNotes:notes afterNotes:notes];
+    PDFPageEditAction *act = [[PDFPageEditAction alloc] init];
+    act.pageIndex = pageIndex;
+    act.appendedStroke = [stroke copy];
+    [self pushEditAction:act];
     [self markDirty];
 }
 
@@ -819,7 +824,15 @@ static const NSUInteger kMaxUndoSteps = 45;
     if (!act) return NSNotFound;
     [_undoStack removeLastObject];
     [_redoStack addObject:act];
-    [self applyStateForPage:act.pageIndex strokes:act.beforeStrokes notes:act.beforeNotes];
+    if (act.appendedStroke) {
+        NSString *pk = [NSString stringWithFormat:@"%ld", (long)act.pageIndex];
+        NSMutableArray *list = _strokesByPage[pk];
+        [list removeLastObject];
+        if (list.count == 0) [_strokesByPage removeObjectForKey:pk];
+        [self markDirty];
+    } else {
+        [self applyStateForPage:act.pageIndex strokes:act.beforeStrokes notes:act.beforeNotes];
+    }
     return act.pageIndex;
 }
 
@@ -828,7 +841,18 @@ static const NSUInteger kMaxUndoSteps = 45;
     if (!act) return NSNotFound;
     [_redoStack removeLastObject];
     [_undoStack addObject:act];
-    [self applyStateForPage:act.pageIndex strokes:act.afterStrokes notes:act.afterNotes];
+    if (act.appendedStroke) {
+        NSString *pk = [NSString stringWithFormat:@"%ld", (long)act.pageIndex];
+        NSMutableArray *list = _strokesByPage[pk];
+        if (!list) {
+            list = [NSMutableArray array];
+            _strokesByPage[pk] = list;
+        }
+        [list addObject:[act.appendedStroke copy]];
+        [self markDirty];
+    } else {
+        [self applyStateForPage:act.pageIndex strokes:act.afterStrokes notes:act.afterNotes];
+    }
     return act.pageIndex;
 }
 

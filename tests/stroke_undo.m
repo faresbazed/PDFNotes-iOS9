@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 
 // UIKit-free payload: points identify each stroke and survive copying.
+static NSUInteger strokeCopies;
 @interface Stroke : NSObject <NSCopying> {
     NSArray *_points;
 }
@@ -9,6 +10,7 @@
 @implementation Stroke
 @synthesize points = _points;
 - (id)copyWithZone:(NSZone *)zone {
+    strokeCopies++;
     Stroke *copy = [[[self class] allocWithZone:zone] init];
     copy.points = [self.points copy];
     return copy;
@@ -18,15 +20,18 @@ typedef NSObject TextNote;
 
 @interface PDFPageEditAction : NSObject {
     NSInteger _pageIndex;
+    Stroke *_appendedStroke;
     NSArray *_beforeStrokes, *_afterStrokes, *_beforeNotes, *_afterNotes;
 }
 @property (nonatomic, assign) NSInteger pageIndex;
+@property (nonatomic, retain) Stroke *appendedStroke;
 @property (nonatomic, retain) NSArray *beforeStrokes;
 @property (nonatomic, retain) NSArray *afterStrokes;
 @property (nonatomic, retain) NSArray *beforeNotes;
 @property (nonatomic, retain) NSArray *afterNotes;
 @end
 @implementation PDFPageEditAction
+@synthesize appendedStroke = _appendedStroke;
 @synthesize pageIndex = _pageIndex, beforeStrokes = _beforeStrokes;
 @synthesize afterStrokes = _afterStrokes, beforeNotes = _beforeNotes, afterNotes = _afterNotes;
 @end
@@ -96,6 +101,22 @@ int main(void) {
         Check([store canRedo], "undo enables redo");
         [store addStroke:a onPage:1];
         Check(![store canRedo], "new edit discards redo");
+        AnnotationStore *dense = [AnnotationStore new];
+        strokeCopies = 0;
+        for (NSUInteger i = 0; i < 256; i++) {
+            [dense addStroke:a onPage:0];
+        }
+        printf("256 pen lifts: %lu stroke copies\n", (unsigned long)strokeCopies);
+        Check(strokeCopies <= 512, "append does not copy older strokes");
+        a.points = @[@"changed input"];
+        ((Stroke *)[dense strokesForPage:0].lastObject).points = @[@"changed store"];
+        for (NSUInteger i = 0; i < kMaxUndoSteps; i++) [dense undoReturningPage];
+        Check(!dense.canUndo && [dense strokesForPage:0].count == 256 - kMaxUndoSteps,
+              "dense page preserves bounded undo history");
+        for (NSUInteger i = 0; i < kMaxUndoSteps; i++) [dense redoReturningPage];
+        Check(!dense.canRedo && [dense strokesForPage:0].count == 256 &&
+              [[((Stroke *)[dense strokesForPage:0].lastObject).points firstObject] isEqual:@"A"],
+              "redo keeps a private copy of committed ink");
         printf("%s: stroke undo regression (%d failures)\n", failures ? "FAIL" : "PASS", failures);
     }
     return failures ? 1 : 0;
