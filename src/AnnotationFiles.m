@@ -5,29 +5,61 @@ static NSString *EscapeKey(NSString *relativePath) {
             stringByReplacingOccurrencesOfString:@"/" withString:@"%2F"];
 }
 
+static NSString *RelativePath(NSString *path, NSString *documents) {
+    NSString *resolved = [path stringByResolvingSymlinksInPath] ?: [path stringByStandardizingPath];
+    NSString *prefix = [documents hasSuffix:@"/"] ? documents : [documents stringByAppendingString:@"/"];
+    if (![resolved hasPrefix:prefix]) return nil;
+    NSString *rel = [resolved substringFromIndex:prefix.length];
+    return rel.length > 0 ? rel : nil;
+}
+
 NSString *PDFAnnotationKey(NSString *pdfPath, NSString *documents) {
     if (pdfPath.length == 0) return @"untitled.pdf";
-    NSString *docs = documents;
+    NSString *rel = RelativePath(pdfPath, documents);
+    if (rel) return EscapeKey(rel);
     NSString *resolved = [pdfPath stringByResolvingSymlinksInPath] ?: [pdfPath stringByStandardizingPath];
-    NSString *prefix = [docs hasSuffix:@"/"] ? docs : [docs stringByAppendingString:@"/"];
-    if ([resolved hasPrefix:prefix]) {
-        NSString *rel = [resolved substringFromIndex:prefix.length];
-        if (rel.length > 0) {
-            return EscapeKey(rel);
-        }
-    }
     return EscapeKey([resolved lastPathComponent]);
+}
+
+static NSArray<NSString *> *LibraryPDFs(NSString *documents) {
+    NSDirectoryEnumerator *enumerator = [[NSFileManager defaultManager] enumeratorAtPath:documents];
+    if (!enumerator) return nil;
+    NSMutableArray<NSString *> *pdfs = [NSMutableArray array];
+    NSString *relative;
+    while ((relative = [enumerator nextObject])) {
+        NSString *first = [[relative pathComponents] firstObject];
+        if ([first isEqualToString:@"Annotations"] || [first isEqualToString:@"Inbox"] ||
+            [[relative lastPathComponent] hasPrefix:@"."]) {
+            [enumerator skipDescendents];
+            continue;
+        }
+        NSDictionary *attributes = [enumerator fileAttributes];
+        if ([[attributes objectForKey:NSFileType] isEqualToString:NSFileTypeRegular] &&
+            [[relative.pathExtension lowercaseString] isEqualToString:@"pdf"]) [pdfs addObject:relative];
+    }
+    return pdfs;
 }
 
 static NSString *AnnotationFile(NSString *path, NSString *documents) {
     return [[documents stringByAppendingPathComponent:@"Annotations"] stringByAppendingPathComponent:[PDFAnnotationKey(path, documents) stringByAppendingPathExtension:@"plist"]];
 }
 
+// v1/v2.0 keyed annotations by file name alone. That file belongs to a document only when it is
+// the sole library PDF with that name; otherwise it is another document's (or an ambiguous) file.
 NSString *PDFLegacyAnnotationFile(NSString *pdfPath, NSString *documents) {
-    if (pdfPath.length == 0) return nil;
-    NSString *legacy = [[documents stringByAppendingPathComponent:@"Annotations"] stringByAppendingPathComponent:[[pdfPath lastPathComponent] stringByAppendingPathExtension:@"plist"]];
-    if ([legacy isEqualToString:AnnotationFile(pdfPath, documents)]) return nil;
-    return legacy;
+    NSString *relative = pdfPath.length > 0 ? RelativePath(pdfPath, documents) : nil;
+    if (!relative) return nil;
+    NSString *name = [relative lastPathComponent];
+    NSString *legacy = [[documents stringByAppendingPathComponent:@"Annotations"] stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"plist"]];
+    if ([legacy isEqualToString:AnnotationFile(pdfPath, documents)] ||
+        ![[NSFileManager defaultManager] fileExistsAtPath:legacy]) return nil;
+    BOOL listed = NO;
+    for (NSString *other in LibraryPDFs(documents)) {
+        if (![[other lastPathComponent] isEqualToString:name]) continue;
+        if (![other isEqualToString:relative]) return nil;
+        listed = YES;
+    }
+    return listed ? legacy : nil;
 }
 
 void PDFDeleteAnnotations(NSString *itemPath, BOOL isDirectory, NSString *documents, NSUserDefaults *defaults) {
@@ -122,19 +154,9 @@ void PDFMigrateAnnotations(NSString *documents, NSUserDefaults *defaults) {
     NSString *annDir = [documents stringByAppendingPathComponent:@"Annotations"];
     NSMutableDictionary *claimants = [NSMutableDictionary dictionary];
     NSMutableSet *currentKeys = [NSMutableSet set];
-    NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:documents];
-    if (!enumerator) return;
-    NSString *relative;
-    while ((relative = [enumerator nextObject])) {
-        NSString *first = [[relative pathComponents] firstObject];
-        if ([first isEqualToString:@"Annotations"] || [first isEqualToString:@"Inbox"] ||
-            [[relative lastPathComponent] hasPrefix:@"."]) {
-            [enumerator skipDescendents];
-            continue;
-        }
-        NSDictionary *attributes = [enumerator fileAttributes];
-        if (![[attributes objectForKey:NSFileType] isEqualToString:NSFileTypeRegular] ||
-            ![[relative.pathExtension lowercaseString] isEqualToString:@"pdf"]) continue;
+    NSArray<NSString *> *pdfs = LibraryPDFs(documents);
+    if (!pdfs) return;
+    for (NSString *relative in pdfs) {
         NSString *legacy = [relative stringByReplacingOccurrencesOfString:@"/" withString:@"__"];
         NSString *key = EscapeKey(relative);
         [currentKeys addObject:key];
