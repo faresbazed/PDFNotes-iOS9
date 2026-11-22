@@ -138,14 +138,20 @@ static void TestOverlongSidecar(void) {
     NSString *legacyPath = [[documents stringByAppendingPathComponent:@"Annotations"]
                             stringByAppendingPathComponent:[pdf.lastPathComponent stringByAppendingPathExtension:@"plist"]];
     if (![legacy writeToFile:legacyPath atomically:YES]) abort();
+    NSString *key = [@"lastPage." stringByAppendingString:[TempStore annotationKeyForPDFPath:pdf]];
+    [[NSUserDefaults standardUserDefaults] setInteger:8 forKey:key];
     TempStore *legacyStore = [[TempStore alloc] initWithPDFPath:pdf];
     Check([legacyStore strokesForPage:0].count == 1, "overlong primary loads the original legacy file");
+    Check(legacyStore.lastPageIndex == 8 && [TempStore savedLastPageForPDFPath:pdf] == 8,
+          "stale legacy ink cannot replace newer reading progress");
     [legacyStore clearPage:0];
     Check(![legacyStore flushSynchronously], "cannot report clearing legacy ink if the empty primary cannot be written");
 
     NSString *shortPDF = [dir stringByAppendingPathComponent:@"Short.pdf"];
     NSString *shortLegacy = [[legacyPath stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"Short.pdf.plist"];
     if (![fm createFileAtPath:shortPDF contents:nil attributes:nil] || ![legacy writeToFile:shortLegacy atomically:YES]) abort();
+    NSString *shortKey = [@"lastPage." stringByAppendingString:[TempStore annotationKeyForPDFPath:shortPDF]];
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:shortKey];
     TempStore *shortStore = [[TempStore alloc] initWithPDFPath:shortPDF];
     Check([shortStore strokesForPage:0].count == 1, "short primary also falls back to legacy ink");
     [shortStore clearPage:0];

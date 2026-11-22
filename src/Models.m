@@ -470,6 +470,9 @@ static const NSUInteger kMaxUndoSteps = 45;
 }
 
 + (NSInteger)savedLastPageForPDFPath:(NSString *)pdfPath {
+    NSString *key = [NSString stringWithFormat:@"lastPage.%@", [self annotationKeyForPDFPath:pdfPath]];
+    NSNumber *savedPage = [[NSUserDefaults standardUserDefaults] objectForKey:key];
+    if (savedPage) return savedPage.integerValue;
     NSString *path = [self annotationFilePathForPDFPath:pdfPath];
     if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
         NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
@@ -477,8 +480,7 @@ static const NSUInteger kMaxUndoSteps = 45;
             return [dict[@"lastPage"] integerValue];
         }
     }
-    NSString *key = [NSString stringWithFormat:@"lastPage.%@", [self annotationKeyForPDFPath:pdfPath]];
-    return [[NSUserDefaults standardUserDefaults] integerForKey:key];
+    return 0;
 }
 
 + (BOOL)deleteLibraryItemAtPath:(NSString *)itemPath isDirectory:(BOOL)isDirectory error:(NSError **)error {
@@ -546,7 +548,8 @@ static const NSUInteger kMaxUndoSteps = 45;
     }
 
     NSString *defKey = [NSString stringWithFormat:@"lastPage.%@", _annotationKey];
-    _lastPageIndex = [[NSUserDefaults standardUserDefaults] integerForKey:defKey];
+    NSNumber *preferredPage = [[NSUserDefaults standardUserDefaults] objectForKey:defKey];
+    _lastPageIndex = preferredPage.integerValue;
 
     if (!data) return;
 
@@ -560,12 +563,10 @@ static const NSUInteger kMaxUndoSteps = 45;
 
     if ([root isKindOfClass:[NSDictionary class]]) {
         NSDictionary *dict = (NSDictionary *)root;
-        if (dict[@"lastPage"] != nil) {
-            NSInteger savedPage = [dict[@"lastPage"] integerValue];
-            if (_lastPageIndex != savedPage) {
-                _lastPageIndex = savedPage;
-                [[NSUserDefaults standardUserDefaults] setInteger:savedPage forKey:defKey];
-            }
+        // Page changes update preferences immediately; a sidecar may be older.
+        if (!preferredPage && dict[@"lastPage"] != nil) {
+            _lastPageIndex = [dict[@"lastPage"] integerValue];
+            [[NSUserDefaults standardUserDefaults] setInteger:_lastPageIndex forKey:defKey];
         }
         if ([dict[@"bookmarks"] isKindOfClass:[NSArray class]]) {
             for (id num in dict[@"bookmarks"]) {
