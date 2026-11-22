@@ -148,9 +148,13 @@ static void TestOverlongSidecar(void) {
     if (![fm createFileAtPath:shortPDF contents:nil attributes:nil] || ![legacy writeToFile:shortLegacy atomically:YES]) abort();
     TempStore *shortStore = [[TempStore alloc] initWithPDFPath:shortPDF];
     Check([shortStore strokesForPage:0].count == 1, "short primary also falls back to legacy ink");
+    shortStore.lastPageIndex = 5;
     [shortStore clearPage:0];
     Check([shortStore flushSynchronously] && [[[[TempStore alloc] initWithPDFPath:shortPDF] strokesForPage:0] count] == 0 &&
           [fm fileExistsAtPath:shortLegacy], "clearing survives reopen without deleting a legacy file");
+    shortStore.lastPageIndex = 9;
+    Check([[TempStore alloc] initWithPDFPath:shortPDF].lastPageIndex == 9,
+          "empty legacy override does not mask later reading progress");
 }
 
 int main(void) { @autoreleasepool {

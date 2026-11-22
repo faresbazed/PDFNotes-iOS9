@@ -377,8 +377,8 @@ static void PDFExtractRGB(UIColor *color, CGFloat *outR, CGFloat *outG, CGFloat 
     }];
 
     // Keep an empty primary plist if deleting it could expose a legacy sidecar.
-    if (pagesOut.count == 0 && notesOut.count == 0 && bmOut.count == 0 &&
-        (!_legacyPath || ![[NSFileManager defaultManager] fileExistsAtPath:_legacyPath])) {
+    BOOL hasAnnotations = pagesOut.count || notesOut.count || bmOut.count;
+    if (!hasAnnotations && (!_legacyPath || ![[NSFileManager defaultManager] fileExistsAtPath:_legacyPath])) {
         return unlink(_path.fileSystemRepresentation) == 0 || errno == ENOENT || errno == ENAMETOOLONG;
     }
 
@@ -391,7 +391,7 @@ static void PDFExtractRGB(UIColor *color, CGFloat *outR, CGFloat *outG, CGFloat 
     if (bmOut.count > 0) {
         root[@"bookmarks"] = bmOut;
     }
-    if (_lastPage > 0) {
+    if (hasAnnotations && _lastPage > 0) {
         root[@"lastPage"] = @(_lastPage);
     }
 
