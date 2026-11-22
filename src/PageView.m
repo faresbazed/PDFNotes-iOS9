@@ -681,6 +681,12 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     return (_tool == ReaderToolPen || _tool == ReaderToolMarker || _tool == ReaderToolEraser || _tool == ReaderToolNote);
 }
 
+- (void)setTool:(ReaderTool)tool {
+    if (_tool == tool) return;
+    [self cancelActiveTouchIfNeeded];
+    _tool = tool;
+}
+
 - (CAShapeLayer *)newLiveSegment {
     CAShapeLayer *segment = [CAShapeLayer layer];
     segment.fillColor = NULL;

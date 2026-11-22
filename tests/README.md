@@ -47,7 +47,8 @@ directory and are removed automatically.
 Runs the production PageView scheduling, invalidation and release methods with a
 controlled dispatcher. Images are ordered lists of stroke IDs; an edit can be
 injected after a worker finishes but before its result reaches the UI. This
-exercises append coalescing, staged erase/cancel, clear, eviction, resize, and
+exercises rapid pen lifts, idle flush, deferral during active ink, stale timers,
+append coalescing, staged erase/cancel, clear, eviction, resize, and
 allocation failure. It does not test UIKit pixels, frame rate or touch latency.
 
 ## Sticky-note drag undo (`run_drag_undo.sh`)

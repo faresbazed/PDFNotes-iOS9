@@ -41,6 +41,15 @@ typedef NSArray UIImage;
 + (int)renderQueue { return 1; }
 @end
 
+@interface PDFWeakTimerTarget : NSObject
+@end
+@implementation PDFWeakTimerTarget
++ (NSTimer *)scheduledTimerWithTimeInterval:(NSTimeInterval)delay target:(id)target
+                                   selector:(SEL)sel repeats:(BOOL)repeats {
+    return [NSTimer timerWithTimeInterval:delay target:target selector:sel userInfo:nil repeats:repeats];
+}
+@end
+
 static void (*beforePublish)(void);
 static int queue, jobs, replayed;
 static BOOL failAllocation;
@@ -73,6 +82,8 @@ static UIImage *PDFRenderInkBitmap(CGSize sz, CGFloat scale, CGRect trim, PDFRea
     CGFloat _inkTargetScale, _inkZoomScale, _renderedPixelWidth;
     PDFReadingTheme _theme;
     PDFCancelToken *_inkRenderToken, *_pdfRenderToken;
+    NSTimer *_inkBatchTimer;
+    Stroke *_currentStroke;
     Surface *_inkImageView, *_imageView;
     CGRect _bounds;
 }
@@ -99,6 +110,11 @@ static UIImage *PDFRenderInkBitmap(CGSize sz, CGFloat scale, CGRect trim, PDFRea
     [_strokes addObject:stroke];
     [_pendingInkLayers addObject:[Surface new]];
     [self scheduleInkRender];
+}
+- (void)penLift:(NSString *)stroke {
+    [_strokes addObject:stroke];
+    [_pendingInkLayers addObject:[Surface new]];
+    [self batchFinishedInk];
 }
 @end
 
@@ -155,6 +171,32 @@ int main(void) {
         failAllocation = NO;
         [page scheduleInkRender];
         assert(([page->_inkImageView.image isEqual:@[@"F", @"G"]] && !page->_pendingInkLayers.count));
+        page = [PageView new];
+        before = jobs;
+        for (int i = 0; i < 32; i++) {
+            [page penLift:[NSString stringWithFormat:@"%d", i]];
+            assert(page->_pendingInkLayers.count == (i + 1) % 8);
+        }
+        assert(jobs == before + 4 && [page->_inkImageView.image isEqual:page->_strokes]);
+
+        [page penLift:@"a"];
+        NSTimer *timer = page->_inkBatchTimer;
+        [page penLift:@"b"];
+        assert(timer && timer == page->_inkBatchTimer);
+        page->_currentStroke = @"c";
+        [timer fire];
+        assert(!page->_inkBatchTimer && page->_pendingInkLayers.count == 2 && jobs == before + 4);
+        page->_currentStroke = nil;
+        [page penLift:@"c"];
+        [page->_inkBatchTimer fire];
+        assert(!page->_inkBatchTimer && !page->_pendingInkLayers.count && jobs == before + 5);
+        assert([page->_inkImageView.image isEqual:page->_strokes]);
+        [page penLift:@"evict"];
+        timer = page->_inkBatchTimer;
+        [page releaseContent];
+        [page inkBatchTimerFired:timer];
+        assert(!page->_inkBatchTimer && jobs == before + 5 && !page->_inkImageView.image);
+        puts("PASS: 32 rapid pen lifts, 4 bitmap jobs; idle flush, active stroke and eviction");
         puts("PASS: ink render ordering, coalescing, erase/cancel, release, resize and allocation retry");
     }
     return 0;
