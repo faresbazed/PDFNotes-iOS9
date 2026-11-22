@@ -1444,13 +1444,20 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
 #pragma mark - Navigation Grid, Reader Options & In-PDF Search
 
 - (void)backTapped {
+    if (_store && ![_store flushSynchronously]) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Annotations Not Saved"
+                                                                       message:@"Your edits are still open. Check available storage and try again, or export an annotated copy."
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
     _isClosing = YES;
     [_hideTimer invalidate];
     _hideTimer = nil;
     [_trimCancelToken cancel];
     [_searchToken cancel];
     [_exportCancelToken cancel];
-    [_store flushSynchronously];
     [self.navigationController popViewControllerAnimated:YES];
 }
 
