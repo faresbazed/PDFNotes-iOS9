@@ -6,6 +6,7 @@ From the repository root:
 ./tests/run.sh                     # Library favorites, names and annotation files (system GNUstep)
 python3 tests/run_stroke_undo.py    # Stroke undo (system GNUstep)
 ./tests/run_ink_render.sh          # Ink render scheduling (system GNUstep)
+./tests/run_live_geometry.sh       # Live pen/marker geometry (system GNUstep)
 ./tests/run_drag_undo.sh            # Sticky-note drag undo (libobjc2/ARC GNUstep)
 ```
 
@@ -47,8 +48,14 @@ directory and are removed automatically.
 Runs the production PageView scheduling, invalidation and release methods with a
 controlled dispatcher. Images are ordered lists of stroke IDs; an edit can be
 injected after a worker finishes but before its result reaches the UI. This
-exercises append coalescing, staged erase/cancel, clear, eviction, resize, and
+exercises rapid pen lifts, idle flush, deferral during active ink, stale timers,
+append coalescing, staged erase/cancel, clear, eviction, resize, and
 allocation failure. It does not test UIKit pixels, frame rate or touch latency.
+
+The live geometry runner drives the production touch handlers with coalesced
+samples, recording path commands and layer settings instead of pixels. It
+checks that the active tip follows accepted samples, segments join across batch
+boundaries, marker opacity applies once, and a fast down/up dash keeps its end.
 
 ## Sticky-note drag undo (`run_drag_undo.sh`)
 
