@@ -1,6 +1,8 @@
 #import "Models.h"
 #import "AnnotationFiles.h"
 #import <math.h>
+#include <errno.h>
+#include <unistd.h>
 
 static inline CGFloat PDFSafeFloat(CGFloat v, CGFloat fallback, CGFloat minVal, CGFloat maxVal) {
     if (!isfinite(v)) return fallback;
@@ -327,6 +329,94 @@ static void PDFExtractRGB(UIColor *color, CGFloat *outR, CGFloat *outG, CGFloat 
 @implementation PDFPageEditAction
 @end
 
+@interface PDFAnnotationWrite : NSOperation
+@property (nonatomic, copy) NSString *path;
+@property (nonatomic, copy) NSString *legacyPath;
+@property (nonatomic, copy) NSDictionary<NSString *, NSArray<Stroke *> *> *pages;
+@property (nonatomic, copy) NSDictionary<NSString *, NSArray<TextNote *> *> *notes;
+@property (nonatomic, copy) NSIndexSet *bookmarks;
+@property (nonatomic) NSInteger lastPage;
+@property (nonatomic, readonly) BOOL succeeded;
+@end
+
+@implementation PDFAnnotationWrite
+
+- (BOOL)writeSnapshot {
+    NSMutableDictionary *pagesOut = [NSMutableDictionary dictionary];
+    for (NSString *pk in _pages) {
+        NSArray<Stroke *> *strokes = _pages[pk];
+        if (strokes.count == 0) continue;
+        NSMutableArray *serialized = [NSMutableArray arrayWithCapacity:strokes.count];
+        for (Stroke *s in strokes) {
+            NSDictionary *d = [s toDictionary];
+            if ([d[@"pts"] count] > 0) {
+                [serialized addObject:d];
+            }
+        }
+        if (serialized.count > 0) {
+            pagesOut[pk] = serialized;
+        }
+    }
+
+    NSMutableDictionary *notesOut = [NSMutableDictionary dictionary];
+    for (NSString *pk in _notes) {
+        NSArray<TextNote *> *notes = _notes[pk];
+        if (notes.count == 0) continue;
+        NSMutableArray *serialized = [NSMutableArray arrayWithCapacity:notes.count];
+        for (TextNote *n in notes) {
+            [serialized addObject:[n toDictionary]];
+        }
+        if (serialized.count > 0) {
+            notesOut[pk] = serialized;
+        }
+    }
+
+    NSMutableArray *bmOut = [NSMutableArray array];
+    [_bookmarks enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
+        [bmOut addObject:@(idx)];
+    }];
+
+    // Keep an empty primary plist if deleting it could expose a legacy sidecar.
+    BOOL hasAnnotations = pagesOut.count || notesOut.count || bmOut.count;
+    if (!hasAnnotations && (!_legacyPath || ![[NSFileManager defaultManager] fileExistsAtPath:_legacyPath])) {
+        return unlink(_path.fileSystemRepresentation) == 0 || errno == ENOENT || errno == ENAMETOOLONG;
+    }
+
+    NSMutableDictionary *root = [NSMutableDictionary dictionary];
+    root[@"v"] = @2;
+    root[@"pages"] = pagesOut;
+    if (notesOut.count > 0) {
+        root[@"notes"] = notesOut;
+    }
+    if (bmOut.count > 0) {
+        root[@"bookmarks"] = bmOut;
+    }
+    if (hasAnnotations && _lastPage > 0) {
+        root[@"lastPage"] = @(_lastPage);
+    }
+
+    NSError *err = nil;
+    NSData *plistData = [NSPropertyListSerialization dataWithPropertyList:root
+                                                                   format:NSPropertyListXMLFormat_v1_0
+                                                                  options:0
+                                                                    error:&err];
+    if (!plistData) return NO;
+    if (![[NSFileManager defaultManager] createDirectoryAtPath:_path.stringByDeletingLastPathComponent
+                                   withIntermediateDirectories:YES attributes:nil error:NULL]) return NO;
+    return [plistData writeToFile:_path options:NSDataWritingAtomic error:NULL];
+}
+
+- (void)main {
+    @autoreleasepool {
+        _succeeded = [self writeSnapshot];
+        _pages = nil;
+        _notes = nil;
+        _bookmarks = nil;
+    }
+}
+
+@end
+
 #pragma mark - AnnotationStore
 
 static const NSUInteger kMaxUndoSteps = 45;
@@ -338,6 +428,9 @@ static const NSUInteger kMaxUndoSteps = 45;
     NSMutableArray<PDFPageEditAction *> *_undoStack;
     NSMutableArray<PDFPageEditAction *> *_redoStack;
     BOOL _dirty;
+    NSString *_filePath;
+    NSOperationQueue *_saveQueue;
+    PDFAnnotationWrite *_pendingWrite;
 }
 
 + (NSString *)documentsDirectory {
@@ -377,6 +470,9 @@ static const NSUInteger kMaxUndoSteps = 45;
 }
 
 + (NSInteger)savedLastPageForPDFPath:(NSString *)pdfPath {
+    NSString *key = [NSString stringWithFormat:@"lastPage.%@", [self annotationKeyForPDFPath:pdfPath]];
+    NSNumber *savedPage = [[NSUserDefaults standardUserDefaults] objectForKey:key];
+    if (savedPage) return savedPage.integerValue;
     NSString *path = [self annotationFilePathForPDFPath:pdfPath];
     if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
         NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
@@ -384,8 +480,7 @@ static const NSUInteger kMaxUndoSteps = 45;
             return [dict[@"lastPage"] integerValue];
         }
     }
-    NSString *key = [NSString stringWithFormat:@"lastPage.%@", [self annotationKeyForPDFPath:pdfPath]];
-    return [[NSUserDefaults standardUserDefaults] integerForKey:key];
+    return 0;
 }
 
 + (BOOL)deleteLibraryItemAtPath:(NSString *)itemPath isDirectory:(BOOL)isDirectory error:(NSError **)error {
@@ -405,6 +500,11 @@ static const NSUInteger kMaxUndoSteps = 45;
     if (self) {
         _pdfPath = [pdfPath copy];
         _annotationKey = [[[self class] annotationKeyForPDFPath:pdfPath] copy];
+        NSString *dir = [[[self class] documentsDirectory] stringByAppendingPathComponent:@"Annotations"];
+        _filePath = [dir stringByAppendingPathComponent:[_annotationKey stringByAppendingPathExtension:@"plist"]];
+        _saveQueue = [[NSOperationQueue alloc] init];
+        _saveQueue.maxConcurrentOperationCount = 1;
+        _saveQueue.qualityOfService = NSQualityOfServiceUtility;
         _strokesByPage = [NSMutableDictionary dictionary];
         _notesByPage = [NSMutableDictionary dictionary];
         _bookmarks = [NSMutableIndexSet indexSet];
@@ -415,23 +515,20 @@ static const NSUInteger kMaxUndoSteps = 45;
         [self loadFromDisk];
 
         NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
-        [nc addObserver:self selector:@selector(flushSynchronously) name:UIApplicationWillResignActiveNotification object:nil];
-        [nc addObserver:self selector:@selector(flushSynchronously) name:UIApplicationDidEnterBackgroundNotification object:nil];
-        [nc addObserver:self selector:@selector(flushSynchronously) name:UIApplicationWillTerminateNotification object:nil];
+        [nc addObserver:self selector:@selector(flushForLifecycle:) name:UIApplicationWillResignActiveNotification object:nil];
+        [nc addObserver:self selector:@selector(flushForLifecycle:) name:UIApplicationDidEnterBackgroundNotification object:nil];
+        [nc addObserver:self selector:@selector(flushForLifecycle:) name:UIApplicationWillTerminateNotification object:nil];
     }
     return self;
 }
 
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
-    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushSynchronously) object:nil];
-    if (_dirty) {
-        [self writeToDiskNow];
-    }
+    [self flushSynchronously];
 }
 
 - (NSString *)filePath {
-    return [[[self class] annotationsDirectory] stringByAppendingPathComponent:[_annotationKey stringByAppendingPathExtension:@"plist"]];
+    return _filePath;
 }
 
 - (void)loadFromDisk {
@@ -451,7 +548,8 @@ static const NSUInteger kMaxUndoSteps = 45;
     }
 
     NSString *defKey = [NSString stringWithFormat:@"lastPage.%@", _annotationKey];
-    _lastPageIndex = [[NSUserDefaults standardUserDefaults] integerForKey:defKey];
+    NSNumber *preferredPage = [[NSUserDefaults standardUserDefaults] objectForKey:defKey];
+    _lastPageIndex = preferredPage.integerValue;
 
     if (!data) return;
 
@@ -465,8 +563,10 @@ static const NSUInteger kMaxUndoSteps = 45;
 
     if ([root isKindOfClass:[NSDictionary class]]) {
         NSDictionary *dict = (NSDictionary *)root;
-        if (dict[@"lastPage"] != nil) {
+        // Page changes update preferences immediately; a sidecar may be older.
+        if (!preferredPage && dict[@"lastPage"] != nil) {
             _lastPageIndex = [dict[@"lastPage"] integerValue];
+            [[NSUserDefaults standardUserDefaults] setInteger:_lastPageIndex forKey:defKey];
         }
         if ([dict[@"bookmarks"] isKindOfClass:[NSArray class]]) {
             for (id num in dict[@"bookmarks"]) {
@@ -789,7 +889,7 @@ static const NSUInteger kMaxUndoSteps = 45;
     _lastPageIndex = lastPageIndex;
     NSString *defKey = [NSString stringWithFormat:@"lastPage.%@", _annotationKey];
     [[NSUserDefaults standardUserDefaults] setInteger:lastPageIndex forKey:defKey];
-    if ([self annotatedPageCount] > 0 || _bookmarks.count > 0) {
+    if (_strokesByPage.count || _notesByPage.count || _bookmarks.count) {
         [self markDirty];
     }
 }
@@ -858,82 +958,66 @@ static const NSUInteger kMaxUndoSteps = 45;
 
 #pragma mark - Debounced & Atomic Persistence
 
+- (void)scheduleAutosave {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(autosave) object:nil];
+    [self performSelector:@selector(autosave) withObject:nil afterDelay:0.45];
+}
+
 - (void)markDirty {
     _dirty = YES;
-    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushSynchronously) object:nil];
-    [self performSelector:@selector(flushSynchronously) withObject:nil afterDelay:0.45];
+    [self scheduleAutosave];
 }
 
-- (void)flushSynchronously {
-    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushSynchronously) object:nil];
-    if (!_dirty) return;
-    [self writeToDiskNow];
+- (PDFAnnotationWrite *)newWrite {
+    PDFAnnotationWrite *write = [[PDFAnnotationWrite alloc] init];
+    write.path = _filePath;
+    NSString *legacyName = [_pdfPath.lastPathComponent stringByAppendingPathExtension:@"plist"];
+    if (![_filePath.lastPathComponent isEqualToString:legacyName])
+        write.legacyPath = [_filePath.stringByDeletingLastPathComponent stringByAppendingPathComponent:legacyName];
+    // Committed stroke geometry is read-only. Snapshot membership, not every point.
+    NSMutableDictionary *pages = [NSMutableDictionary dictionaryWithCapacity:_strokesByPage.count];
+    for (NSString *key in _strokesByPage) pages[key] = [_strokesByPage[key] copy];
+    write.pages = pages;
+    NSMutableDictionary *notes = [NSMutableDictionary dictionaryWithCapacity:_notesByPage.count];
+    for (NSString *key in _notesByPage) notes[key] = [[self class] deepCopyNotes:_notesByPage[key]];
+    write.notes = notes;
+    write.bookmarks = _bookmarks;
+    write.lastPage = _lastPageIndex;
+    return write;
 }
 
-- (void)writeToDiskNow {
-    _dirty = NO;
+- (void)reapFinishedWrite {
+    if (_pendingWrite && !_pendingWrite.succeeded) _dirty = YES;
+    _pendingWrite = nil;
+}
 
-    NSMutableDictionary *pagesOut = [NSMutableDictionary dictionary];
-    for (NSString *pk in _strokesByPage) {
-        NSArray<Stroke *> *strokes = _strokesByPage[pk];
-        if (strokes.count == 0) continue;
-        NSMutableArray *serialized = [NSMutableArray arrayWithCapacity:strokes.count];
-        for (Stroke *s in strokes) {
-            NSDictionary *d = [s toDictionary];
-            if ([d[@"pts"] count] > 0) {
-                [serialized addObject:d];
-            }
-        }
-        if (serialized.count > 0) {
-            pagesOut[pk] = serialized;
-        }
-    }
-
-    NSMutableDictionary *notesOut = [NSMutableDictionary dictionary];
-    for (NSString *pk in _notesByPage) {
-        NSArray<TextNote *> *notes = _notesByPage[pk];
-        if (notes.count == 0) continue;
-        NSMutableArray *serialized = [NSMutableArray arrayWithCapacity:notes.count];
-        for (TextNote *n in notes) {
-            [serialized addObject:[n toDictionary]];
-        }
-        if (serialized.count > 0) {
-            notesOut[pk] = serialized;
-        }
-    }
-
-    NSMutableArray *bmOut = [NSMutableArray array];
-    [_bookmarks enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
-        [bmOut addObject:@(idx)];
-    }];
-
-    NSString *path = [self filePath];
-    if (pagesOut.count == 0 && notesOut.count == 0 && bmOut.count == 0) {
-        [[NSFileManager defaultManager] removeItemAtPath:path error:NULL];
+- (void)autosave {
+    if (_pendingWrite && !_pendingWrite.isFinished) {
+        // Keep at most one snapshot, even when the disk is slower than handwriting.
+        [self scheduleAutosave];
         return;
     }
+    [self reapFinishedWrite];
+    if (!_dirty) return;
+    _pendingWrite = [self newWrite];
+    _dirty = NO;
+    [_saveQueue addOperation:_pendingWrite];
+}
 
-    NSMutableDictionary *root = [NSMutableDictionary dictionary];
-    root[@"v"] = @2;
-    root[@"pages"] = pagesOut;
-    if (notesOut.count > 0) {
-        root[@"notes"] = notesOut;
+- (BOOL)flushSynchronously {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(autosave) object:nil];
+    [_pendingWrite waitUntilFinished];
+    [self reapFinishedWrite];
+    if (_dirty) {
+        PDFAnnotationWrite *write = [self newWrite];
+        [write start];
+        _dirty = !write.succeeded;
     }
-    if (bmOut.count > 0) {
-        root[@"bookmarks"] = bmOut;
-    }
-    if (_lastPageIndex > 0) {
-        root[@"lastPage"] = @(_lastPageIndex);
-    }
+    return !_dirty;
+}
 
-    NSError *err = nil;
-    NSData *plistData = [NSPropertyListSerialization dataWithPropertyList:root
-                                                                   format:NSPropertyListXMLFormat_v1_0
-                                                                  options:0
-                                                                    error:&err];
-    if (plistData) {
-        [plistData writeToFile:path options:NSDataWritingAtomic error:NULL];
-    }
+- (void)flushForLifecycle:(NSNotification *)notification {
+    [self flushSynchronously];
 }
 
 @end

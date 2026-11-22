@@ -43,7 +43,7 @@ typedef NS_ENUM(NSInteger, StrokeKind) {
 
 - (instancetype)initWithPDFPath:(NSString *)pdfPath;
 
-// Strokes
+// Strokes returned by the store are read-only; submit changes with the mutation methods.
 - (NSArray<Stroke *> *)strokesForPage:(NSInteger)pageIndex;
 - (BOOL)hasAnnotationsOnPage:(NSInteger)pageIndex;
 - (NSUInteger)annotatedPageCount;
@@ -71,7 +71,7 @@ typedef NS_ENUM(NSInteger, StrokeKind) {
 
 // Persistence
 - (void)markDirty;
-- (void)flushSynchronously;
+- (BOOL)flushSynchronously;
 
 // Library file management helpers
 + (NSString *)documentsDirectory;
