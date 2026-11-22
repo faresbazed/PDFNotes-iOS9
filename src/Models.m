@@ -331,6 +331,7 @@ static void PDFExtractRGB(UIColor *color, CGFloat *outR, CGFloat *outG, CGFloat 
 
 @interface PDFAnnotationWrite : NSOperation
 @property (nonatomic, copy) NSString *path;
+@property (nonatomic, copy) NSString *legacyPath;
 @property (nonatomic, copy) NSDictionary<NSString *, NSArray<Stroke *> *> *pages;
 @property (nonatomic, copy) NSDictionary<NSString *, NSArray<TextNote *> *> *notes;
 @property (nonatomic, copy) NSIndexSet *bookmarks;
@@ -375,8 +376,9 @@ static void PDFExtractRGB(UIColor *color, CGFloat *outR, CGFloat *outG, CGFloat 
         [bmOut addObject:@(idx)];
     }];
 
-    if (pagesOut.count == 0 && notesOut.count == 0 && bmOut.count == 0) {
-        // A sidecar with an overlong name cannot exist, so an empty save needs no removal.
+    // Keep an empty primary plist if deleting it could expose a legacy sidecar.
+    BOOL hasAnnotations = pagesOut.count || notesOut.count || bmOut.count;
+    if (!hasAnnotations && (!_legacyPath || ![[NSFileManager defaultManager] fileExistsAtPath:_legacyPath])) {
         return unlink(_path.fileSystemRepresentation) == 0 || errno == ENOENT || errno == ENAMETOOLONG;
     }
 
@@ -389,7 +391,7 @@ static void PDFExtractRGB(UIColor *color, CGFloat *outR, CGFloat *outG, CGFloat 
     if (bmOut.count > 0) {
         root[@"bookmarks"] = bmOut;
     }
-    if (_lastPage > 0) {
+    if (hasAnnotations && _lastPage > 0) {
         root[@"lastPage"] = @(_lastPage);
     }
 
@@ -964,6 +966,9 @@ static const NSUInteger kMaxUndoSteps = 45;
 - (PDFAnnotationWrite *)newWrite {
     PDFAnnotationWrite *write = [[PDFAnnotationWrite alloc] init];
     write.path = _filePath;
+    NSString *legacyName = [_pdfPath.lastPathComponent stringByAppendingPathExtension:@"plist"];
+    if (![_filePath.lastPathComponent isEqualToString:legacyName])
+        write.legacyPath = [_filePath.stringByDeletingLastPathComponent stringByAppendingPathComponent:legacyName];
     // Committed stroke geometry is read-only. Snapshot membership, not every point.
     NSMutableDictionary *pages = [NSMutableDictionary dictionaryWithCapacity:_strokesByPage.count];
     for (NSString *key in _strokesByPage) pages[key] = [_strokesByPage[key] copy];
