@@ -376,7 +376,8 @@ static void PDFExtractRGB(UIColor *color, CGFloat *outR, CGFloat *outG, CGFloat 
     }];
 
     if (pagesOut.count == 0 && notesOut.count == 0 && bmOut.count == 0) {
-        return unlink(_path.fileSystemRepresentation) == 0 || errno == ENOENT;
+        // A sidecar with an overlong name cannot exist, so an empty save needs no removal.
+        return unlink(_path.fileSystemRepresentation) == 0 || errno == ENOENT || errno == ENAMETOOLONG;
     }
 
     NSMutableDictionary *root = [NSMutableDictionary dictionary];

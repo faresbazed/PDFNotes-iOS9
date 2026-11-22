@@ -121,11 +121,26 @@ static void Benchmark(void) {
           "explicit flush drains the outstanding write before returning");
 }
 
+static void TestOverlongSidecar(void) {
+    NSString *part = [@"p" stringByPaddingToLength:130 withString:@"p" startingAtIndex:0];
+    NSString *dir = [documents stringByAppendingPathComponent:part];
+    NSString *pdf = [dir stringByAppendingPathComponent:[part stringByAppendingPathExtension:@"pdf"]];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (![fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL] ||
+        ![fm createFileAtPath:pdf contents:nil attributes:nil]) abort();
+    TempStore *store = [[TempStore alloc] initWithPDFPath:pdf];
+    [store addStroke:MakeStroke(Stroke.class, 2) onPage:0];
+    Check(![store flushSynchronously], "overlong sidecar cannot silently report a saved edit");
+    [store undoReturningPage];
+    Check([store flushSynchronously], "undoing every edit needs no overlong sidecar to be removed");
+}
+
 int main(void) { @autoreleasepool {
     documents = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     gate = [NSCondition new];
     TestConcurrentEdits();
     TestRetry();
+    TestOverlongSidecar();
     Benchmark();
     [[NSFileManager defaultManager] removeItemAtPath:documents error:NULL];
     return failures ? 1 : 0;

@@ -1446,12 +1446,20 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
 - (void)backTapped {
     if (_store && ![_store flushSynchronously]) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Annotations Not Saved"
-                                                                       message:@"Your edits are still open. Check available storage and try again, or export an annotated copy."
+                                                                       message:@"Stay to retry or export an annotated copy. If you leave now, unsaved changes may be lost."
                                                                 preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"Keep Editing" style:UIAlertActionStyleCancel handler:nil]];
+        __weak typeof(self) weakSelf = self;
+        [alert addAction:[UIAlertAction actionWithTitle:@"Leave Anyway" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+            [weakSelf closeReader];
+        }]];
         [self presentViewController:alert animated:YES completion:nil];
         return;
     }
+    [self closeReader];
+}
+
+- (void)closeReader {
     _isClosing = YES;
     [_hideTimer invalidate];
     _hideTimer = nil;
