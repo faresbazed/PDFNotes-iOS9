@@ -16,6 +16,12 @@ because Ubuntu's stock GCC runtime cannot compile the app's ARC/weak references.
 
 ## Annotation files (`run.sh`)
 
+Also compiles the production Foundation-only library filename sanitizer in
+`LibraryNames.m` and
+checks leading dots, empty names, existing character replacement, and visibility
+of created PDFs and folders under the library's dot-file filter. The binary is
+`build/tests/library-filename-tests`.
+
 Compiles the production Foundation-only annotation file helper used by
 AnnotationStore. Fixtures use a unique temporary Documents directory. Tests
 cover key escaping, deletion, renaming and migration, including collision and
