@@ -627,6 +627,7 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
 
 - (void)releaseContent {
     [_stagedErasedIndices removeAllIndexes];
+    [self removePendingInkLayers:_pendingInkLayers.count];
     [self cancelActiveTouchIfNeeded];
     [_inkBatchTimer invalidate];
     _inkBatchTimer = nil;
@@ -639,7 +640,6 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     [_inkRenderToken cancel];
     _inkRenderToken = nil;
     _inkImageView.image = nil;
-    [self removePendingInkLayers:_pendingInkLayers.count];
     _bakedStrokeCount = NSNotFound;
 }
 
@@ -726,6 +726,24 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     CGPathAddLineToPoint(preview, NULL, _prevLiveViewPt.x, _prevLiveViewPt.y);
     [self displayLivePath:preview];
     CGPathRelease(preview);
+}
+
+- (void)finishLivePathAtPoint:(CGPoint)endPt {
+    if (_snappedToStraightLine) {
+        [self updateSnappedStraightLineToViewPoint:endPt];
+    } else if (_livePointCount >= 2) {
+        [_currentStroke addNormalizedPoint:[self normalisedPointForViewPoint:endPt]];
+        CGPathAddQuadCurveToPoint(_liveCGPath, NULL, _prevLiveViewPt.x, _prevLiveViewPt.y, endPt.x, endPt.y);
+        [self displayLivePath:_liveCGPath];
+    } else if (hypotf(endPt.x - _touchStartViewPt.x, endPt.y - _touchStartViewPt.y) >= 0.4f) {
+        // A fast flick may have no intervening touchesMoved callback.
+        [_currentStroke addNormalizedPoint:[self normalisedPointForViewPoint:endPt]];
+        CGMutablePathRef line = CGPathCreateMutable();
+        CGPathMoveToPoint(line, NULL, _touchStartViewPt.x, _touchStartViewPt.y);
+        CGPathAddLineToPoint(line, NULL, endPt.x, endPt.y);
+        [self displayLivePath:line];
+        CGPathRelease(line);
+    }
 }
 
 - (void)clearLiveLayer {
@@ -968,8 +986,6 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
         return;
     }
 
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
     BOOL addedAny = NO;
     for (UITouch *st in samples) {
         CGPoint p = [st locationInView:self];
@@ -979,6 +995,11 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
         CGFloat stepSq = (p.x - _prevLiveViewPt.x) * (p.x - _prevLiveViewPt.x) +
                          (p.y - _prevLiveViewPt.y) * (p.y - _prevLiveViewPt.y);
         if (stepSq * _inkZoomScale * _inkZoomScale < 0.65f) continue;
+        if (!addedAny) {
+            [CATransaction begin];
+            [CATransaction setDisableActions:YES];
+            addedAny = YES;
+        }
 
         [_currentStroke addNormalizedPoint:[self normalisedPointForViewPoint:p]];
         CGPoint mid = CGPointMake((_prevLiveViewPt.x + p.x) * 0.5f, (_prevLiveViewPt.y + p.y) * 0.5f);
@@ -996,14 +1017,13 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
         _segmentPointCount++;
         _lastTouchViewPt = p;
         if (_segmentPointCount >= kLiveSegmentPoints) [self freezeLiveSegment];
-        addedAny = YES;
     }
 
     if (addedAny) {
         [self displayLiveTip];
+        [CATransaction commit];
         [self scheduleStraightLineSnapCheck:_lastTouchViewPt];
     }
-    [CATransaction commit];
 }
 
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
@@ -1047,21 +1067,7 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     if (_currentStroke) {
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
-        if (_snappedToStraightLine) {
-            [self updateSnappedStraightLineToViewPoint:endPt];
-        } else if (_livePointCount >= 2) {
-            [_currentStroke addNormalizedPoint:[self normalisedPointForViewPoint:endPt]];
-            CGPathAddQuadCurveToPoint(_liveCGPath, NULL, _prevLiveViewPt.x, _prevLiveViewPt.y, endPt.x, endPt.y);
-            [self displayLivePath:_liveCGPath];
-        } else if (hypotf(endPt.x - _touchStartViewPt.x, endPt.y - _touchStartViewPt.y) >= 0.4f) {
-            // A fast flick may have no intervening touchesMoved callback.
-            [_currentStroke addNormalizedPoint:[self normalisedPointForViewPoint:endPt]];
-            CGMutablePathRef line = CGPathCreateMutable();
-            CGPathMoveToPoint(line, NULL, _touchStartViewPt.x, _touchStartViewPt.y);
-            CGPathAddLineToPoint(line, NULL, endPt.x, endPt.y);
-            [self displayLivePath:line];
-            CGPathRelease(line);
-        }
+        [self finishLivePathAtPoint:endPt];
         Stroke *finished = _currentStroke;
         _currentStroke = nil;
 
