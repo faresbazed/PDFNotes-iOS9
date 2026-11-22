@@ -2,7 +2,15 @@
 #import <math.h>
 
 static CGFloat gMainScreenScale = 2.0f;
-static const NSUInteger kLivePenSegmentPoints = 64;
+static const NSUInteger kLiveSegmentPoints = 32;
+static const NSUInteger kInkBatchLimit = 8;
+static const NSTimeInterval kInkBatchDelay = 0.18;
+
+// Keep page coordinates inside a tightly sized layer (including its nonzero bounds origin).
+static void PDFSetInkBounds(CALayer *layer, CGRect bounds) {
+    layer.bounds = bounds;
+    layer.position = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
+}
 
 static CGFloat PDFClamp(CGFloat v, CGFloat lo, CGFloat hi) {
     if (!isfinite(v)) return lo;
@@ -96,6 +104,16 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
 
 #pragma mark - Draggable Note Card View
 
+@interface PDFNoteOverlay : UIView
+@end
+
+@implementation PDFNoteOverlay
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *hit = [super hitTest:point withEvent:event];
+    return hit == self ? nil : hit;
+}
+@end
+
 @interface PDFNoteBadgeView : UIView
 @property (nonatomic, strong) TextNote *note;
 @property (nonatomic, strong) UILabel *label;
@@ -168,6 +186,7 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     PDFReadingTheme _requestedTheme;
     CGRect _requestedTrim;
     PDFCancelToken *_inkRenderToken;
+    NSTimer *_inkBatchTimer;
     CGFloat _renderedPixelWidth;
     PDFReadingTheme _renderedTheme;
     CGRect _renderedTrim;
@@ -187,6 +206,7 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     CGPoint _prevLiveViewPt;
     NSUInteger _livePointCount;
     NSUInteger _segmentPointCount;
+    CGRect _frozenInkBounds;
     BOOL _snappedToStraightLine;
     NSTimer *_lineSnapTimer;
     CFTimeInterval _snapDeadline;
@@ -264,7 +284,7 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
         _eraserRingLayer.hidden = YES;
         [self.layer addSublayer:_eraserRingLayer];
 
-        _notesContainer = [[UIView alloc] initWithFrame:self.bounds];
+        _notesContainer = [[PDFNoteOverlay alloc] initWithFrame:self.bounds];
         _notesContainer.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         _notesContainer.backgroundColor = [UIColor clearColor];
         [self addSubview:_notesContainer];
@@ -275,6 +295,7 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
 }
 
 - (void)dealloc {
+    [_inkBatchTimer invalidate];
     [_pdfRenderToken cancel];
     [_inkRenderToken cancel];
     [_lineSnapTimer invalidate];
@@ -522,7 +543,29 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     [self scheduleInkRender];
 }
 
+- (void)batchFinishedInk {
+    // Finished overlays are already visible. Flatten a burst only once, after a
+    // pause or eight pending strokes; an in-flight render already drains its tail.
+    if (!_pendingInkLayers.count || _inkRenderToken) return;
+    if (_pendingInkLayers.count >= kInkBatchLimit) {
+        [self scheduleInkRender];
+    } else if (_inkBatchTimer) {
+        _inkBatchTimer.fireDate = [NSDate dateWithTimeIntervalSinceNow:kInkBatchDelay];
+    } else {
+        _inkBatchTimer = [PDFWeakTimerTarget scheduledTimerWithTimeInterval:kInkBatchDelay target:self
+                                                                   selector:@selector(inkBatchTimerFired:) repeats:NO];
+    }
+}
+
+- (void)inkBatchTimerFired:(NSTimer *)timer {
+    if (timer != _inkBatchTimer) return;
+    _inkBatchTimer = nil;
+    if (!_currentStroke) [self scheduleInkRender];
+}
+
 - (void)scheduleInkRender {
+    [_inkBatchTimer invalidate];
+    _inkBatchTimer = nil;
     CGSize sz = self.bounds.size;
     CGFloat scale = [self inkBitmapScaleForZoom:_inkZoomScale];
     if (!CGSizeEqualToSize(sz, _inkTargetSize) || scale != _inkTargetScale) {
@@ -585,6 +628,8 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
 - (void)releaseContent {
     [_stagedErasedIndices removeAllIndexes];
     [self cancelActiveTouchIfNeeded];
+    [_inkBatchTimer invalidate];
+    _inkBatchTimer = nil;
 
     [_pdfRenderToken cancel];
     _pdfRenderToken = nil;
@@ -642,22 +687,39 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     segment.lineCap = kCALineCapRound;
     segment.lineJoin = kCALineJoinRound;
     segment.contentsScale = gMainScreenScale;
-    segment.frame = self.bounds;
-    CGFloat alpha = (_currentStroke.kind == StrokeKindMarker && _theme == PDFReadingThemeNight)
-                  ? 0.44f : _currentStroke.alpha;
-    segment.strokeColor = [_currentStroke.color colorWithAlphaComponent:alpha].CGColor;
+    segment.strokeColor = [_currentStroke.color colorWithAlphaComponent:1.0f].CGColor;
     segment.lineWidth = [self viewWidthForFraction:_currentStroke.widthFraction inSize:self.bounds.size];
     [_liveContainer addSublayer:segment];
     return segment;
 }
 
-- (void)cropFinishedSegment {
-    CGRect box = CGPathGetBoundingBox(_liveLayer.path);
+- (void)displayLivePath:(CGPathRef)path {
+    _liveLayer.path = path;
+    CGRect box = CGPathGetBoundingBox(path);
     if (CGRectIsNull(box)) return;
     CGFloat pad = ceil(_liveLayer.lineWidth * 0.5f) + 1.0f;
     box = CGRectIntegral(CGRectInset(box, -pad, -pad));
-    _liveLayer.bounds = box;
-    _liveLayer.position = CGPointMake(CGRectGetMidX(box), CGRectGetMidY(box));
+    PDFSetInkBounds(_liveLayer, box);
+    PDFSetInkBounds(_liveContainer, CGRectUnion(_frozenInkBounds, box));
+}
+
+- (void)freezeLiveSegment {
+    [self displayLivePath:_liveCGPath];
+    _frozenInkBounds = _liveContainer.bounds;
+    _liveLayer = [self newLiveSegment];
+    CGPathRelease(_liveCGPath);
+    _liveCGPath = CGPathCreateMutable();
+    CGPathMoveToPoint(_liveCGPath, NULL, _lastSmoothedMidPt.x, _lastSmoothedMidPt.y);
+    _segmentPointCount = 0;
+}
+
+- (void)displayLiveTip {
+    // The smoothed prefix ends at a midpoint. Extend only the preview to the real
+    // sample; the next sample will replace this line with the correct curve.
+    CGMutablePathRef preview = CGPathCreateMutableCopy(_liveCGPath);
+    CGPathAddLineToPoint(preview, NULL, _prevLiveViewPt.x, _prevLiveViewPt.y);
+    [self displayLivePath:preview];
+    CGPathRelease(preview);
 }
 
 - (void)clearLiveLayer {
@@ -690,6 +752,8 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     if (_stagedErasedIndices.count > 0) {
         [_stagedErasedIndices removeAllIndexes];
         [self invalidateInkBitmap];
+    } else {
+        [self batchFinishedInk];
     }
     _eraserMovedEnough = NO;
 }
@@ -744,7 +808,8 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
         _liveContainer.sublayers = nil;
         [_liveContainer addSublayer:_liveLayer];
     }
-    _liveLayer.path = line.CGPath;
+    _frozenInkBounds = CGRectNull;
+    [self displayLivePath:line.CGPath];
     [CATransaction commit];
 }
 
@@ -824,10 +889,15 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     _liveContainer = [CALayer layer];
-    _liveContainer.frame = self.bounds;
+    _frozenInkBounds = CGRectNull;
+    // Composite the marker once, so neither overlapping segment caps nor
+    // self-intersections make a single stroke darker.
+    _liveContainer.allowsGroupOpacity = YES;
+    _liveContainer.opacity = (_currentStroke.kind == StrokeKindMarker && _theme == PDFReadingThemeNight)
+                           ? 0.44f : _currentStroke.alpha;
     [self.layer insertSublayer:_liveContainer below:_eraserRingLayer];
     _liveLayer = [self newLiveSegment];
-    _liveLayer.path = _liveCGPath;
+    [self displayLivePath:_liveCGPath];
     [CATransaction commit];
 }
 
@@ -892,7 +962,8 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
         return;
     }
 
-    // Incremental O(1) per-sample quadratic Bezier live path update!
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
     BOOL addedAny = NO;
     for (UITouch *st in samples) {
         CGPoint p = [st locationInView:self];
@@ -901,7 +972,7 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
 
         CGFloat stepSq = (p.x - _prevLiveViewPt.x) * (p.x - _prevLiveViewPt.x) +
                          (p.y - _prevLiveViewPt.y) * (p.y - _prevLiveViewPt.y);
-        if (stepSq < 0.65f) continue;
+        if (stepSq * _inkZoomScale * _inkZoomScale < 0.65f) continue;
 
         [_currentStroke addNormalizedPoint:[self normalisedPointForViewPoint:p]];
         CGPoint mid = CGPointMake((_prevLiveViewPt.x + p.x) * 0.5f, (_prevLiveViewPt.y + p.y) * 0.5f);
@@ -918,26 +989,15 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
         _livePointCount++;
         _segmentPointCount++;
         _lastTouchViewPt = p;
+        if (_segmentPointCount >= kLiveSegmentPoints) [self freezeLiveSegment];
         addedAny = YES;
     }
 
     if (addedAny) {
-        [CATransaction begin];
-        [CATransaction setDisableActions:YES];
-        _liveLayer.path = _liveCGPath;
-        // Freeze opaque segments so extending a long pen stroke only republishes its tail.
-        // Keep translucent markers in one path: overlapping round caps would darken joins.
-        if (_currentStroke.kind == StrokeKindPen && _segmentPointCount >= kLivePenSegmentPoints) {
-            [self cropFinishedSegment];
-            _liveLayer = [self newLiveSegment];
-            CGPathRelease(_liveCGPath);
-            _liveCGPath = CGPathCreateMutable();
-            CGPathMoveToPoint(_liveCGPath, NULL, _lastSmoothedMidPt.x, _lastSmoothedMidPt.y);
-            _segmentPointCount = 0;
-        }
-        [CATransaction commit];
+        [self displayLiveTip];
         [self scheduleStraightLineSnapCheck:_lastTouchViewPt];
     }
+    [CATransaction commit];
 }
 
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
@@ -981,22 +1041,31 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
     if (_currentStroke) {
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
-        if (!_snappedToStraightLine && _livePointCount >= 2) {
+        if (_snappedToStraightLine) {
+            [self updateSnappedStraightLineToViewPoint:endPt];
+        } else if (_livePointCount >= 2) {
             [_currentStroke addNormalizedPoint:[self normalisedPointForViewPoint:endPt]];
             CGPathAddQuadCurveToPoint(_liveCGPath, NULL, _prevLiveViewPt.x, _prevLiveViewPt.y, endPt.x, endPt.y);
-            _liveLayer.path = _liveCGPath;
+            [self displayLivePath:_liveCGPath];
+        } else if (hypotf(endPt.x - _touchStartViewPt.x, endPt.y - _touchStartViewPt.y) >= 0.4f) {
+            // A fast flick may have no intervening touchesMoved callback.
+            [_currentStroke addNormalizedPoint:[self normalisedPointForViewPoint:endPt]];
+            CGMutablePathRef line = CGPathCreateMutable();
+            CGPathMoveToPoint(line, NULL, _touchStartViewPt.x, _touchStartViewPt.y);
+            CGPathAddLineToPoint(line, NULL, endPt.x, endPt.y);
+            [self displayLivePath:line];
+            CGPathRelease(line);
         }
         Stroke *finished = _currentStroke;
         _currentStroke = nil;
 
         if (finished.points.count > 0) {
-            [self cropFinishedSegment];
             [_inkImageView.layer addSublayer:_liveContainer];
             [_pendingInkLayers addObject:_liveContainer];
             _liveContainer = nil; // The bitmap completion retires this overlay.
             [_strokes addObject:finished];
             [_store addStroke:finished onPage:_pageIndex];
-            [self scheduleInkRender];
+            [self batchFinishedInk];
             [self.delegate pageViewDidChangeAnnotations:self];
         }
         [self clearLiveLayer];
@@ -1006,6 +1075,7 @@ static UIImage *PDFRenderInkBitmap(CGSize size,
 }
 
 - (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    if (!_activeTouch || ![touches containsObject:_activeTouch]) return;
     [self cancelActiveTouchIfNeeded];
     [self.delegate pageViewDidInteract:self];
 }
