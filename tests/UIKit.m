@@ -1,5 +1,9 @@
 #import <UIKit/UIKit.h>
 
+@implementation NSOperationQueue (TestQoS)
+- (void)setQualityOfService:(NSQualityOfService)quality {}
+@end
+
 @implementation UIColor
 + (instancetype)colorWithRed:(CGFloat)r green:(CGFloat)g blue:(CGFloat)b alpha:(CGFloat)a {
     UIColor *c = [self new];

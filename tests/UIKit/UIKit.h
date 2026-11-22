@@ -19,6 +19,10 @@ enum { kCGLineCapRound, kCGLineJoinRound };
 #define UIApplicationDidEnterBackgroundNotification @"test.background"
 #define UIApplicationWillTerminateNotification @"test.terminate"
 
+@interface NSOperationQueue (TestQoS)
+- (void)setQualityOfService:(NSQualityOfService)quality;
+@end
+
 @interface UIColor : NSObject
 @property CGFloat r, g, b, a;
 @property (readonly) CGColorRef CGColor;

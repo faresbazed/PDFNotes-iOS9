@@ -1444,13 +1444,28 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
 #pragma mark - Navigation Grid, Reader Options & In-PDF Search
 
 - (void)backTapped {
+    if (_store && ![_store flushSynchronously]) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Annotations Not Saved"
+                                                                       message:@"Stay to retry or export an annotated copy. If you leave now, unsaved changes may be lost."
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"Keep Editing" style:UIAlertActionStyleCancel handler:nil]];
+        __weak typeof(self) weakSelf = self;
+        [alert addAction:[UIAlertAction actionWithTitle:@"Leave Anyway" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+            [weakSelf closeReader];
+        }]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    [self closeReader];
+}
+
+- (void)closeReader {
     _isClosing = YES;
     [_hideTimer invalidate];
     _hideTimer = nil;
     [_trimCancelToken cancel];
     [_searchToken cancel];
     [_exportCancelToken cancel];
-    [_store flushSynchronously];
     [self.navigationController popViewControllerAnimated:YES];
 }
 

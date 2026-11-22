@@ -8,6 +8,7 @@ python3 tests/run_stroke_undo.py    # Stroke undo (system GNUstep)
 ./tests/run_ink_render.sh          # Ink render scheduling (system GNUstep)
 ./tests/run_live_geometry.sh       # Live pen/marker geometry (system GNUstep)
 ./tests/run_drag_undo.sh            # Sticky-note drag undo (libobjc2/ARC GNUstep)
+./tests/run_persistence.sh          # Annotation autosave, lifecycle and retry (libobjc2/ARC GNUstep)
 ```
 
 All tests use clang and GNUstep Foundation; none requires an iOS SDK or tests
@@ -77,6 +78,15 @@ an undo implementation bug. The regression exercises preview, ended and
 cancelled drags (both commit under existing behavior), undo/redo, and one-entry
 history, plus empty pages, missing IDs and nonfinite positions. It does not
 test disk persistence.
+
+## Autosave and lifecycle
+
+`run_persistence.sh` uses the same ARC installation and UIKit stand-ins, but
+executes the real model, debounce timer and disk writer in a temporary library.
+It holds a background write open while new edits arrive, checks both snapshots,
+then reopens the file after a lifecycle flush. A directory obstructing the
+sidecar tests failed writes and retry without another edit. The printed
+30,000-point autosave callback timing measures the host, not iPad frame time.
 
 ## One-time Ubuntu setup
 
