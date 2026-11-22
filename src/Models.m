@@ -561,7 +561,11 @@ static const NSUInteger kMaxUndoSteps = 45;
     if ([root isKindOfClass:[NSDictionary class]]) {
         NSDictionary *dict = (NSDictionary *)root;
         if (dict[@"lastPage"] != nil) {
-            _lastPageIndex = [dict[@"lastPage"] integerValue];
+            NSInteger savedPage = [dict[@"lastPage"] integerValue];
+            if (_lastPageIndex != savedPage) {
+                _lastPageIndex = savedPage;
+                [[NSUserDefaults standardUserDefaults] setInteger:savedPage forKey:defKey];
+            }
         }
         if ([dict[@"bookmarks"] isKindOfClass:[NSArray class]]) {
             for (id num in dict[@"bookmarks"]) {

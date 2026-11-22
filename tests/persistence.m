@@ -134,7 +134,7 @@ static void TestOverlongSidecar(void) {
     [store undoReturningPage];
     Check([store flushSynchronously], "undoing every edit needs no overlong sidecar to be removed");
 
-    NSDictionary *legacy = @{@"pages": @{@"0": @[[MakeStroke(Stroke.class, 2) toDictionary]]}};
+    NSDictionary *legacy = @{@"lastPage": @5, @"pages": @{@"0": @[[MakeStroke(Stroke.class, 2) toDictionary]]}};
     NSString *legacyPath = [[documents stringByAppendingPathComponent:@"Annotations"]
                             stringByAppendingPathComponent:[pdf.lastPathComponent stringByAppendingPathExtension:@"plist"]];
     if (![legacy writeToFile:legacyPath atomically:YES]) abort();
@@ -148,10 +148,11 @@ static void TestOverlongSidecar(void) {
     if (![fm createFileAtPath:shortPDF contents:nil attributes:nil] || ![legacy writeToFile:shortLegacy atomically:YES]) abort();
     TempStore *shortStore = [[TempStore alloc] initWithPDFPath:shortPDF];
     Check([shortStore strokesForPage:0].count == 1, "short primary also falls back to legacy ink");
-    shortStore.lastPageIndex = 5;
     [shortStore clearPage:0];
     Check([shortStore flushSynchronously] && [[[[TempStore alloc] initWithPDFPath:shortPDF] strokesForPage:0] count] == 0 &&
           [fm fileExistsAtPath:shortLegacy], "clearing survives reopen without deleting a legacy file");
+    Check([[TempStore alloc] initWithPDFPath:shortPDF].lastPageIndex == 5,
+          "clearing without scrolling preserves the page inherited from a legacy file");
     shortStore.lastPageIndex = 9;
     Check([[TempStore alloc] initWithPDFPath:shortPDF].lastPageIndex == 9,
           "empty legacy override does not mask later reading progress");
