@@ -1047,8 +1047,9 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     if (![[_pagePillBtn titleForState:UIControlStateNormal] isEqualToString:pillTitle]) {
         [_pagePillBtn setTitle:pillTitle forState:UIControlStateNormal];
         [self updatePagePillFrame];
+        // Same-page bookmark changes refresh the button in bookmarkTapped.
+        [self updateBookmarkButtonForPage:curPage];
     }
-    [self updateBookmarkButtonForPage:curPage];
 }
 
 - (void)scrollViewDidScroll:(UIScrollView *)scrollView {

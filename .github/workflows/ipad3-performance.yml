@@ -1,0 +1,29 @@
+name: iPad 3 test build
+on:
+  push:
+    branches: [ipad3-performance]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - name: Build separate armv7 test app
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        sed -i 's/com.pdfnotes.ios9</com.pdfnotes.ios9.ipad3test</;s/>PDF Notes</>PDF Notes Test</' Resources/Info.plist
+        bash build.sh
+        mv build/PDFNotes.ipa build/PDFNotes-iPad3-Test.ipa
+        unzip -t build/PDFNotes-iPad3-Test.ipa
+        file build/Payload/PDFNotes.app/PDFNotes | grep -i arm
+    - uses: actions/upload-artifact@v4
+      with:
+        name: PDFNotes-iPad3-Test
+        path: build/PDFNotes-iPad3-Test.ipa
+        if-no-files-found: error
