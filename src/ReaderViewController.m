@@ -1397,28 +1397,25 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
 }
 
 - (void)undoTapped {
-    NSInteger affectedPage = [_store undoReturningPage];
-    if (affectedPage == NSNotFound) return;
-    PageView *pv = _loadedPages[@(affectedPage)];
-    [pv reloadAnnotationsFromStore];
-    [self updateUndoRedoButtons];
-
-    // If the undone edit was on an offscreen page, scroll to show the user!
-    CGRect vis = [self currentViewportInContentCoords];
-    if (affectedPage >= 0 && (NSUInteger)affectedPage < _pageFrames.count) {
-        CGRect pf = [_pageFrames[(NSUInteger)affectedPage] CGRectValue];
-        if (!CGRectIntersectsRect(pf, vis)) {
-            [self jumpToPage:affectedPage animated:YES];
-        }
-    }
+    [self refreshAfterEditOnPage:[_store undoReturningPage]];
 }
 
 - (void)redoTapped {
-    NSInteger affectedPage = [_store redoReturningPage];
+    [self refreshAfterEditOnPage:[_store redoReturningPage]];
+}
+
+- (void)refreshAfterEditOnPage:(NSInteger)affectedPage {
     if (affectedPage == NSNotFound) return;
+    [self updateUndoRedoButtons];
+    if (affectedPage == PDFEditAllPages) {
+        for (PageView *pv in _loadedPages.allValues) {
+            [pv cancelActiveTouchIfNeeded];
+            [pv reloadAnnotationsFromStore];
+        }
+        return;
+    }
     PageView *pv = _loadedPages[@(affectedPage)];
     [pv reloadAnnotationsFromStore];
-    [self updateUndoRedoButtons];
 
     CGRect vis = [self currentViewportInContentCoords];
     if (affectedPage >= 0 && (NSUInteger)affectedPage < _pageFrames.count) {
@@ -1472,6 +1469,18 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     _bookmarkBtn.tintColor = bm
         ? [UIColor colorWithRed:1.0f green:0.78f blue:0.22f alpha:1.0f]
         : [UIColor colorWithWhite:0.92f alpha:1.0f];
+}
+
+- (void)confirmClearAllAnnotations {
+    NSString *message = [NSString stringWithFormat:@"Remove all handwriting, highlights, and text notes added in PDF Notes from “%@”? The original PDF and bookmarks stay unchanged. You can Undo this in one step.", _pdfPath.lastPathComponent];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Clear All Annotations?"
+                                                                   message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Clear All" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        [self->_store clearAllAnnotations];
+        [self refreshAfterEditOnPage:PDFEditAllPages];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)bookmarkTapped {
@@ -1573,6 +1582,11 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     [ac addAction:[UIAlertAction actionWithTitle:@"Go to Page…" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
         [weakSelf promptGoToPage];
     }]];
+    UIAlertAction *clearAll = [UIAlertAction actionWithTitle:@"Clear All Annotations…" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *a) {
+        [weakSelf confirmClearAllAnnotations];
+    }];
+    clearAll.enabled = [_store hasAnnotations];
+    [ac addAction:clearAll];
     [ac addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
 
     UIPopoverPresentationController *pop = ac.popoverPresentationController;

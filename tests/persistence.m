@@ -175,6 +175,37 @@ static void Benchmark(void) {
           "explicit flush drains the outstanding write before returning");
 }
 
+static void TestClearAllAnnotations(void) {
+    NSString *pdf = [documents stringByAppendingPathComponent:@"Clear All.pdf"];
+    NSData *original = [@"unchanged PDF bytes" dataUsingEncoding:NSUTF8StringEncoding];
+    if (![original writeToFile:pdf atomically:YES]) abort();
+    TempStore *store = [[TempStore alloc] initWithPDFPath:pdf];
+    [store clearAllAnnotations];
+    Check(!store.canUndo, "clear on an empty document adds no edit");
+    Stroke *marker = MakeStroke(Stroke.class, 2);
+    marker.kind = StrokeKindMarker;
+    for (NSInteger i = 0; i < 60; ++i) [store addStroke:marker onPage:i];
+    TextNote *note = [TextNote new];
+    note.text = @"margin";
+    [store saveNote:note onPage:60];
+    [store toggleBookmarkForPage:3];
+    store.lastPageIndex = 57;
+    [store clearAllAnnotations];
+    [store clearAllAnnotations];
+    Check(!store.hasAnnotations && store.annotatedPages.count == 0 && [store flushSynchronously],
+          "document clear includes offscreen ink and note-only pages");
+    TempStore *reopened = [[TempStore alloc] initWithPDFPath:pdf];
+    Check(!reopened.hasAnnotations && reopened.lastPageIndex == 57 && [reopened isPageBookmarked:3] &&
+          [[NSData dataWithContentsOfFile:pdf] isEqual:original], "clear survives reopening without changing PDF, bookmarks or progress");
+    Check([store undoReturningPage] == PDFEditAllPages && store.annotatedPageCount == 61 &&
+          [store strokesForPage:59].firstObject.kind == StrokeKindMarker &&
+          [[store notesForPage:60].firstObject.text isEqual:@"margin"], "one Undo restores more pages than the history limit");
+    Check([store redoReturningPage] == PDFEditAllPages && !store.hasAnnotations, "one Redo clears every page again");
+    [store addStroke:MakeStroke(Stroke.class, 3) onPage:10];
+    Check([store undoReturningPage] == 10 && !store.hasAnnotations && [store undoReturningPage] == PDFEditAllPages &&
+          store.annotatedPageCount == 61, "edits after a clear do not overwrite the saved document state");
+}
+
 static void TestOverlongSidecar(void) {
     NSString *part = [@"p" stringByPaddingToLength:130 withString:@"p" startingAtIndex:0];
     NSString *dir = [documents stringByAppendingPathComponent:part];
@@ -224,6 +255,7 @@ int main(void) { @autoreleasepool {
     TestConcurrentEdits();
     TestWarmResume();
     TestRetry();
+    TestClearAllAnnotations();
     TestOverlongSidecar();
     Benchmark();
     [[NSFileManager defaultManager] removeItemAtPath:documents error:NULL];

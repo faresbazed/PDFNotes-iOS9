@@ -8,6 +8,7 @@ In the library, swipe left on a PDF or notebook and tap **Favorite**, or long-pr
 
 - Tap the page counter, then **Saved**. Choose **All**, **Bookmarks**, or **Annotated**. A page with both a bookmark and a note or drawing appears in both filters, but only once in All.
 - After jumping from the page browser, Go to Page, or a search result, open **Reader Options → Jump Back to Page …**. You can retrace up to 16 jumps in the current document. Scrolling, reopening the document, and undo/redo do not add entries.
+- Choose **Reader Options → Clear All Annotations…**, then **Clear All** to remove handwriting, highlights, and text notes added in PDF Notes from every page of the open document. Bookmarks, your reading position, and the PDF itself stay unchanged. Tap **Undo** once to restore everything before closing the reader. The trash button still clears just the current page.
 
 ## Project Structure
 

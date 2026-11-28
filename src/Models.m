@@ -324,6 +324,8 @@ static void PDFExtractRGB(UIColor *color, CGFloat *outR, CGFloat *outG, CGFloat 
 @property (nonatomic, strong) NSArray<Stroke *> *afterStrokes;
 @property (nonatomic, strong) NSArray<TextNote *> *beforeNotes;
 @property (nonatomic, strong) NSArray<TextNote *> *afterNotes;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableArray<Stroke *> *> *documentStrokes;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableArray<TextNote *> *> *documentNotes;
 @end
 
 @implementation PDFPageEditAction
@@ -749,6 +751,10 @@ static const NSUInteger kMaxUndoSteps = 45;
     return keys.count;
 }
 
+- (BOOL)hasAnnotations {
+    return _strokesByPage.count || _notesByPage.count;
+}
+
 - (NSIndexSet *)annotatedPages {
     NSMutableIndexSet *set = [NSMutableIndexSet indexSet];
     for (NSString *k in _strokesByPage) {
@@ -805,6 +811,27 @@ static const NSUInteger kMaxUndoSteps = 45;
     [_notesByPage removeObjectForKey:pk];
     [self pushUndoForPage:pageIndex beforeStrokes:beforeStrokes afterStrokes:@[] beforeNotes:beforeNotes afterNotes:@[]];
     [self markDirty];
+}
+
+- (void)swapAnnotationsForDocumentEdit:(PDFPageEditAction *)action {
+    // Transfer ownership of the page maps; never duplicate the document's ink geometry.
+    NSMutableDictionary *strokes = _strokesByPage;
+    NSMutableDictionary *notes = _notesByPage;
+    _strokesByPage = action.documentStrokes;
+    _notesByPage = action.documentNotes;
+    action.documentStrokes = strokes;
+    action.documentNotes = notes;
+    [self markDirty];
+}
+
+- (void)clearAllAnnotations {
+    if (![self hasAnnotations]) return;
+    PDFPageEditAction *action = [PDFPageEditAction new];
+    action.pageIndex = PDFEditAllPages;
+    action.documentStrokes = [NSMutableDictionary dictionary];
+    action.documentNotes = [NSMutableDictionary dictionary];
+    [self pushEditAction:action];
+    [self swapAnnotationsForDocumentEdit:action];
 }
 
 #pragma mark - Text Notes API
@@ -952,7 +979,9 @@ static const NSUInteger kMaxUndoSteps = 45;
     if (!act) return NSNotFound;
     [_undoStack removeLastObject];
     [_redoStack addObject:act];
-    if (act.appendedStroke) {
+    if (act.pageIndex == PDFEditAllPages) {
+        [self swapAnnotationsForDocumentEdit:act];
+    } else if (act.appendedStroke) {
         NSString *pk = [NSString stringWithFormat:@"%ld", (long)act.pageIndex];
         NSMutableArray *list = _strokesByPage[pk];
         [list removeLastObject];
@@ -969,7 +998,9 @@ static const NSUInteger kMaxUndoSteps = 45;
     if (!act) return NSNotFound;
     [_redoStack removeLastObject];
     [_undoStack addObject:act];
-    if (act.appendedStroke) {
+    if (act.pageIndex == PDFEditAllPages) {
+        [self swapAnnotationsForDocumentEdit:act];
+    } else if (act.appendedStroke) {
         NSString *pk = [NSString stringWithFormat:@"%ld", (long)act.pageIndex];
         NSMutableArray *list = _strokesByPage[pk];
         if (!list) {
