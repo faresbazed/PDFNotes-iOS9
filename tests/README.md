@@ -83,8 +83,12 @@ test disk persistence.
 
 `run_persistence.sh` uses the same ARC installation and UIKit stand-ins, but
 executes the real model, debounce timer and disk writer in a temporary library.
-It holds a background write open while new edits arrive, checks both snapshots,
-then reopens the file after a lifecycle flush. A directory obstructing the
+It holds a background write open across Home, warm resume and further edits,
+then reopens the file after the protected snapshots finish. A UIKit test double
+tracks background-task grants, denial, expiration and exactly-once endings;
+the host does not simulate iOS suspension. A second fixture runs the reader's
+open method with controlled queues and a real annotation store, including Back
+before decoding and before publication. A directory obstructing the
 sidecar tests failed writes and retry without another edit. The printed
 30,000-point autosave callback timing measures the host, not iPad frame time.
 
