@@ -27,8 +27,10 @@ NSMutableArray<PDFLibraryItem *> *PDFScanLibrary(NSString *directory, NSString *
         for (NSString *path in favorites) {
             if ([operation isCancelled]) break;
             @autoreleasepool {
-                NSDictionary *attrs = PDFFavoriteFileAttributes(path, documents);
-                if (attrs) [items addObject:Item(path, [path substringFromIndex:documents.length + 1], attrs, NO)];
+                NSDictionary *attrs = PDFVisibleLibraryTargetAttributes(path, documents);
+                if ([[attrs fileType] isEqualToString:NSFileTypeRegular]) {
+                    [items addObject:Item(path, [path substringFromIndex:documents.length + 1], attrs, NO)];
+                }
             }
         }
         return items;
@@ -47,8 +49,15 @@ NSMutableArray<PDFLibraryItem *> *PDFScanLibrary(NSString *directory, NSString *
                 continue;
             }
             if (isDir && !recursive) [enumerator skipDescendents];
+            NSString *path = [directory stringByAppendingPathComponent:relative];
+            if ([[attrs fileType] isEqualToString:NSFileTypeSymbolicLink]) {
+                // The enumerator does not descend into links; a user can still browse one explicitly.
+                attrs = PDFVisibleLibraryTargetAttributes(path, documents);
+                isDir = [[attrs fileType] isEqualToString:NSFileTypeDirectory];
+                if (!isDir && ![[attrs fileType] isEqualToString:NSFileTypeRegular]) continue;
+            }
             if (!isDir && ![relative.pathExtension.lowercaseString isEqualToString:@"pdf"]) continue;
-            [items addObject:Item([directory stringByAppendingPathComponent:relative], relative, attrs, isDir)];
+            [items addObject:Item(path, relative, attrs, isDir)];
         }
     }
     return items;

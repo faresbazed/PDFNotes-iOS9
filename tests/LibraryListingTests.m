@@ -74,5 +74,20 @@ int main(int argc, const char *argv[]) { @autoreleasepool {
     Check(PDFReadLibraryAnnotationSummary(pdf, docs, defaults, &page) && page == 0, "live page preference overrides sidecar");
     [defaults removeObjectForKey:pref];
     Check(!PDFReadLibraryAnnotationSummary(nested, docs, defaults, &page) && page == 0, "missing sidecar yields no badge");
+    NSString *linkedFolder = [docs stringByAppendingPathComponent:@"Week alias.pdf"];
+    Check(symlink("Course/Week", linkedFolder.fileSystemRepresentation) == 0, "linked folder fixture");
+    for (NSString *target in @[@"Annotations", @"Course/.hidden", @"..", @"nonexistent"]) {
+        NSString *name = [@"alias-" stringByAppendingFormat:@"%@.pdf", target.lastPathComponent];
+        Check(symlink(target.fileSystemRepresentation, [docs stringByAppendingPathComponent:name].fileSystemRepresentation) == 0, "unavailable or non-library link fixture");
+    }
+    BOOL foundFolder = NO;
+    for (PDFLibraryItem *item in PDFScanLibrary(docs, docs, NO, nil, nil)) {
+        if ([item.fullPath isEqual:linkedFolder]) foundFolder = item.isDirectory && [item.name isEqual:@"Week alias.pdf"];
+    }
+    Check(foundFolder, "link to a folder appears as a navigable folder even with a PDF suffix");
+    items = PDFScanLibrary(linkedFolder, docs, NO, nil, nil);
+    Check(items.count == 1 && [[[items firstObject] fullPath] isEqual:[linkedFolder stringByAppendingPathComponent:@"Notes.PDF"]],
+          "browsing a linked folder preserves its visible path");
+    Check(PDFScanLibrary(docs, docs, YES, nil, nil).count == 404, "recursive search lists the folder link without following it twice");
     return failures != 0;
 }}

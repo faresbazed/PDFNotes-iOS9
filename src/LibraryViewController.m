@@ -792,11 +792,13 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
         if ([n hasPrefix:@"."]) continue;
         if (atRoot && ([n isEqualToString:@"Inbox"] || [n isEqualToString:@"Annotations"])) continue;
         NSString *full = [dir stringByAppendingPathComponent:n];
-        BOOL isDir = NO;
-        if ([fm fileExistsAtPath:full isDirectory:&isDir] && isDir) {
+        NSDictionary *attrs = [fm attributesOfItemAtPath:full error:NULL];
+        BOOL link = [[attrs fileType] isEqualToString:NSFileTypeSymbolicLink];
+        if (link) attrs = PDFVisibleLibraryTargetAttributes(full, docs);
+        if ([[attrs fileType] isEqualToString:NSFileTypeDirectory]) {
             NSString *disp = rel.length > 0 ? [rel stringByAppendingPathComponent:n] : n;
             [outFolders addObject:@{ @"title": disp, @"path": full }];
-            [self collectFoldersUnder:full relative:disp into:outFolders];
+            if (!link) [self collectFoldersUnder:full relative:disp into:outFolders];
         }
     }
 }
