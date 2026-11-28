@@ -4,6 +4,7 @@
 #import "PDFIcons.h"
 #import "PageView.h"
 #import "NavigationSheetController.h"
+#import "ReaderNavigation.h"
 #import <math.h>
 
 static NSString *const kPrefToolKey         = @"reader.tool";
@@ -146,6 +147,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     PDFCancelToken *_searchToken;
     NSArray<PDFSearchMatch *> *_searchMatches;
     NSInteger _currentMatchIndex;
+    NSMutableArray<NSNumber *> *_jumpHistory;
 
     // Loading / Error / Export overlay (NEVER blocks Back button!)
     UIView *_loadingOverlay;
@@ -167,6 +169,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
         _displayedPageIndex = NSNotFound;
         _loadedPages = [NSMutableDictionary dictionary];
         _swatchButtons = [NSMutableArray array];
+        _jumpHistory = [NSMutableArray array];
         _currentMatchIndex = -1;
         [self loadUserPreferences];
     }
@@ -635,6 +638,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     [_bookmarkBtn setImage:PDFIconBookmark(YES) forState:UIControlStateSelected];
     _searchBtn   = [self makeDockIconButton:PDFIconSearch() action:@selector(searchButtonTapped)];
     _optionsBtn  = [self makeDockIconButton:PDFIconCrop() action:@selector(optionsTapped)];
+    _optionsBtn.accessibilityLabel = @"Reader options";
     _shareBtn    = [self makeDockIconButton:PDFIconShare() action:@selector(shareTapped)];
 
     NSArray *items = @[
@@ -888,11 +892,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     [super viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
 
     // Capture exact reading anchor BEFORE zoomScale changes!
-    NSInteger anchorPage = 0;
-    CGFloat anchorFraction = 0.0f;
-    if (_pagesReady && _pageFrames.count > 0) {
-        [self captureScrollAnchorPage:&anchorPage fraction:&anchorFraction];
-    }
+    PDFReadingAnchor anchor = [self readingAnchor];
 
     [coordinator animateAlongsideTransition:^(id<UIViewControllerTransitionCoordinatorContext> context) {
         if (self->_pagesReady) {
@@ -900,7 +900,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
             [self->_scrollView setZoomScale:1.0f animated:NO];
             self->_scrollView.contentInset = UIEdgeInsetsZero;
             [self rebuildPageFramesForContainerSize:size];
-            [self restoreScrollAnchorPage:anchorPage fraction:anchorFraction forContainerSize:size];
+            [self restoreReadingAnchor:anchor forContainerSize:size];
         }
         [self layoutHUDChrome];
     } completion:^(id<UIViewControllerTransitionCoordinatorContext> context) {
@@ -910,34 +910,27 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     }];
 }
 
-- (void)captureScrollAnchorPage:(NSInteger *)outPage fraction:(CGFloat *)outFraction {
-    CGFloat scale = MAX(_scrollView.zoomScale, 0.01f);
-    CGFloat unscaledTop = (_scrollView.contentOffset.y + _scrollView.contentInset.top) / scale;
-    NSInteger foundPage = 0;
-    CGFloat frac = 0.0f;
-
-    for (NSUInteger i = 0; i < _pageFrames.count; i++) {
-        CGRect pf = [_pageFrames[i] CGRectValue];
-        if (CGRectGetMaxY(pf) >= unscaledTop) {
-            foundPage = (NSInteger)i;
-            if (pf.size.height > 1.0f) {
-                frac = (unscaledTop - pf.origin.y) / pf.size.height;
-                frac = MAX(-0.2f, MIN(1.0f, frac));
-            }
-            break;
-        }
+- (PDFReadingAnchor)readingAnchor {
+    if (!_pagesReady || !_pageFrames.count) return (PDFReadingAnchor){ NSNotFound, 0, 0 };
+    NSInteger page = [self currentCenteredPageIndex];
+    CGRect frame = [_pageFrames[(NSUInteger)page] CGRectValue];
+    CGRect viewport = [self currentViewportInContentCoords];
+    PDFReadingReference reference = PDFReadingReferenceForViewport(viewport.origin.y, viewport.size.height, _contentView.bounds.size.height,
+                                                                 frame.origin.y, frame.size.height);
+    CGFloat y = CGRectGetMidY(viewport);
+    if (reference == PDFReadingTopLine) {
+        y = viewport.origin.y;
+        page = (NSInteger)MIN([self firstPageEndingAtOrAfterY:y], _pageFrames.count - 1);
+        frame = [_pageFrames[(NSUInteger)page] CGRectValue];
     }
-    *outPage = foundPage;
-    *outFraction = frac;
+    return (PDFReadingAnchor){ page, (y - frame.origin.y) / MAX(1, frame.size.height), reference };
 }
 
-- (void)restoreScrollAnchorPage:(NSInteger)anchorPage fraction:(CGFloat)anchorFraction forContainerSize:(CGSize)containerSize {
-    if (anchorPage < 0 || (NSUInteger)anchorPage >= _pageFrames.count) return;
-    CGRect pf = [_pageFrames[(NSUInteger)anchorPage] CGRectValue];
-    CGFloat rawY = pf.origin.y + anchorFraction * pf.size.height;
-    CGFloat maxOffset = MAX(0.0f, _scrollView.contentSize.height - containerSize.height);
-    CGFloat clampedY = MAX(0.0f, MIN(maxOffset, rawY));
-    _scrollView.contentOffset = CGPointMake(0.0f, clampedY);
+- (void)restoreReadingAnchor:(PDFReadingAnchor)anchor forContainerSize:(CGSize)containerSize {
+    if ((NSUInteger)anchor.page >= _pageFrames.count) return;
+    CGRect frame = [_pageFrames[(NSUInteger)anchor.page] CGRectValue];
+    CGFloat y = PDFRestoreReadingOffset(anchor, frame.origin.y, frame.size.height, containerSize.height, _scrollView.contentSize.height);
+    _scrollView.contentOffset = CGPointMake(0, y);
 }
 
 - (void)rebuildPageFramesForContainerSize:(CGSize)containerSize {
@@ -975,20 +968,14 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
 }
 
 - (void)layoutPagesPreservingAnchor:(BOOL)preserveAnchor {
-    NSInteger anchorPage = 0;
-    CGFloat anchorFraction = 0.0f;
-    if (preserveAnchor && _pageFrames.count > 0) {
-        [self captureScrollAnchorPage:&anchorPage fraction:&anchorFraction];
-    }
+    PDFReadingAnchor anchor = preserveAnchor ? [self readingAnchor] : (PDFReadingAnchor){ NSNotFound, 0, 0 };
 
     [_scrollView setZoomScale:1.0f animated:NO];
     _scrollView.contentInset = UIEdgeInsetsZero;
     CGSize sz = self.view.bounds.size;
     [self rebuildPageFramesForContainerSize:sz];
 
-    if (preserveAnchor && _pageFrames.count > 0) {
-        [self restoreScrollAnchorPage:anchorPage fraction:anchorFraction forContainerSize:sz];
-    }
+    [self restoreReadingAnchor:anchor forContainerSize:sz];
 }
 
 #pragma mark - Virtualized Page Window & Scroll/Zoom Delegates
@@ -1147,9 +1134,9 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     }
     CGRect pf = [_pageFrames[(NSUInteger)pageIndex] CGRectValue];
     CGFloat topMargin = _dockHidden ? 18.0f : 78.0f;
-    CGFloat targetY = MAX(0.0f, pf.origin.y - topMargin);
-    CGFloat maxOffset = MAX(0.0f, _scrollView.contentSize.height - _scrollView.bounds.size.height);
-    [_scrollView setContentOffset:CGPointMake(0.0f, MIN(targetY, maxOffset)) animated:animated];
+    CGFloat targetY = PDFPageJumpOffset(pf.origin.y, pf.size.height, _scrollView.bounds.size.height,
+                                        _scrollView.contentSize.height, topMargin);
+    [_scrollView setContentOffset:CGPointMake(0.0f, targetY) animated:animated];
     if (!animated) {
         [self updateVisiblePagesForceRender:NO];
     }
@@ -1523,7 +1510,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     NavigationSheetController *sheet = [[NavigationSheetController alloc] initWithDoc:_doc store:_store currentPage:curPage];
     __weak typeof(self) weakSelf = self;
     sheet.onSelectPage = ^(NSInteger selectedPage) {
-        [weakSelf jumpToPage:selectedPage animated:NO];
+        [weakSelf navigateToPage:selectedPage];
     };
 
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:sheet];
@@ -1531,6 +1518,12 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
         ? UIModalPresentationFormSheet
         : UIModalPresentationFullScreen;
     [self presentViewController:nav animated:YES completion:nil];
+}
+
+- (void)navigateToPage:(NSInteger)pageIndex {
+    if (!_pagesReady) return;
+    PDFRecordPageJump(_jumpHistory, [self currentCenteredPageIndex], pageIndex, _pageFrames.count);
+    [self jumpToPage:pageIndex animated:NO];
 }
 
 - (void)optionsTapped {
@@ -1542,10 +1535,22 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     NSString *sepiaTitle = (_theme == PDFReadingThemeSepia) ? @"✓ Theme: Warm Sepia" : @"Theme: Warm Sepia";
     NSString *nightTitle = (_theme == PDFReadingThemeNight) ? @"✓ Theme: Night Dark" : @"Theme: Night Dark";
 
-    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"Reader Display Options"
+    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"Reader Options"
                                                                 message:nil
                                                          preferredStyle:UIAlertControllerStyleActionSheet];
     __weak typeof(self) weakSelf = self;
+    NSUInteger backIndex = PDFJumpBackIndex(_jumpHistory, [self currentCenteredPageIndex]);
+    if (backIndex != NSNotFound) {
+        NSInteger page = [_jumpHistory[backIndex] integerValue];
+        NSArray *remaining = [_jumpHistory subarrayWithRange:NSMakeRange(0, backIndex)];
+        NSString *title = [NSString stringWithFormat:@"Jump Back to Page %ld", (long)(page + 1)];
+        [ac addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            __strong typeof(self) sSelf = weakSelf;
+            if (!sSelf) return;
+            [sSelf->_jumpHistory setArray:remaining];
+            [sSelf jumpToPage:page animated:NO];
+        }]];
+    }
     [ac addAction:[UIAlertAction actionWithTitle:trimTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
         [weakSelf toggleAutoTrim];
     }]];
@@ -1614,7 +1619,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
         if (!sSelf) return;
         NSInteger p = [ac.textFields.firstObject.text integerValue];
         if (p >= 1 && p <= sSelf->_doc.pageCount) {
-            [sSelf jumpToPage:(p - 1) animated:YES];
+            [sSelf navigateToPage:(p - 1)];
         }
     }]];
     [self presentViewController:ac animated:YES completion:nil];
@@ -1710,7 +1715,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     if (_currentMatchIndex < 0 || (NSUInteger)_currentMatchIndex >= _searchMatches.count) return;
     PDFSearchMatch *m = _searchMatches[(NSUInteger)_currentMatchIndex];
     _searchStatusLabel.text = [NSString stringWithFormat:@"%ld / %lu", (long)(_currentMatchIndex + 1), (unsigned long)_searchMatches.count];
-    [self jumpToPage:m.pageIndex animated:NO];
+    [self navigateToPage:m.pageIndex];
     PageView *pv = [self ensurePageViewLoadedAtIndex:m.pageIndex];
     [pv pulseHighlightBanner:m.snippet];
 }

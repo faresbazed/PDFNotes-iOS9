@@ -4,6 +4,11 @@ Lightweight, native Objective-C PDF reader, handwritten annotator, and notebook 
 
 In the library, swipe left on a PDF or notebook and tap **Favorite**, or long-press it and choose **Add to Favorites**. Tap **Favorites** at the library root to search and sort starred documents from all folders; tap **All Items** to return. Renaming or moving a document in the app keeps its star. Duplicates start unstarred.
 
+## Reader navigation (source build)
+
+- Tap the page counter, then **Saved**. Choose **All**, **Bookmarks**, or **Annotated**. A page with both a bookmark and a note or drawing appears in both filters, but only once in All.
+- After jumping from the page browser, Go to Page, or a search result, open **Reader Options → Jump Back to Page …**. You can retrace up to 16 jumps in the current document. Scrolling, reopening the document, and undo/redo do not add entries.
+
 ## Project Structure
 
 - `src/Models.h`, `src/Models.m` — `Stroke`, `TextNote`, `AnnotationStore` (single-load per-document store, 45-step Undo/Redo, bookmarks, reading position, atomic XML plist persistence, and library file-move/rename migration), and `PDFWeakTimerTarget`.
