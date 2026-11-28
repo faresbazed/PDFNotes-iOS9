@@ -35,6 +35,8 @@ typedef NS_ENUM(NSInteger, StrokeKind) {
 
 @end
 
+enum { PDFEditAllPages = -1 };
+
 @interface AnnotationStore : NSObject
 
 @property (nonatomic, copy, readonly) NSString *pdfPath;
@@ -46,10 +48,12 @@ typedef NS_ENUM(NSInteger, StrokeKind) {
 // Strokes returned by the store are read-only; submit changes with the mutation methods.
 - (NSArray<Stroke *> *)strokesForPage:(NSInteger)pageIndex;
 - (BOOL)hasAnnotationsOnPage:(NSInteger)pageIndex;
+- (BOOL)hasAnnotations;
 - (NSUInteger)annotatedPageCount;
 - (void)addStroke:(Stroke *)stroke onPage:(NSInteger)pageIndex;
 - (void)replaceStrokes:(NSArray<Stroke *> *)strokes onPage:(NSInteger)pageIndex;
 - (void)clearPage:(NSInteger)pageIndex;
+- (void)clearAllAnnotations;
 
 // Text Notes
 - (NSArray<TextNote *> *)notesForPage:(NSInteger)pageIndex;
@@ -66,8 +70,9 @@ typedef NS_ENUM(NSInteger, StrokeKind) {
 // Multi-step Undo / Redo (covers Pen, Marker, Eraser, Clear Page, and Text Notes)
 - (BOOL)canUndo;
 - (BOOL)canRedo;
-- (NSInteger)undoReturningPage; // Returns affected pageIndex, or NSNotFound
-- (NSInteger)redoReturningPage; // Returns affected pageIndex, or NSNotFound
+// Return a page index, PDFEditAllPages for a document edit, or NSNotFound.
+- (NSInteger)undoReturningPage;
+- (NSInteger)redoReturningPage;
 
 // Persistence
 - (void)markDirty;
