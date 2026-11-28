@@ -1,4 +1,5 @@
 #import "LibraryFavorites.h"
+#import "LibraryListing.h"
 
 static int failures;
 static void Check(BOOL ok, const char *message) {
@@ -39,6 +40,9 @@ int main(void) { @autoreleasepool {
         PDFSetLibraryFavorite(path, YES, docs, defaults);
     }
     Check(PDFLibraryFavoritePaths(docs, defaults).count == 0, "unfavorite removes star; invalid paths are not added");
+    PDFSetLibraryFavorite(root, YES, docs, defaults);
+    PDFRelocateLibraryFavorites(root, @"/Documents/.Private.pdf", NO, docs, defaults);
+    Check(!PDFLibraryFavoritePaths(docs, defaults).count, "renaming a favorite to a hidden filename clears its old star");
 
     NSFileManager *fm = [NSFileManager defaultManager];
     docs = [[NSTemporaryDirectory() stringByResolvingSymlinksInPath] stringByAppendingPathComponent:[NSUUID UUID].UUIDString];
@@ -54,7 +58,7 @@ int main(void) { @autoreleasepool {
     }
     for (NSString *path in @[root, nested, gone, replaced]) PDFSetLibraryFavorite(path, YES, docs, defaults);
     paths = PDFLibraryFavoritePaths(docs, defaults);
-    NSSet *available = [NSSet setWithArray:PDFAvailableFavoriteDocuments(paths, docs)];
+    NSSet *available = [NSSet setWithArray:[PDFScanLibrary(docs, docs, NO, paths, nil) valueForKey:@"fullPath"]];
     Check([available isEqualToSet:[NSSet setWithArray:@[root, nested]]], "Favorites view includes nested and root favorites, not ordinary PDFs, missing files or directories");
     [fm removeItemAtPath:docs error:NULL];
     [defaults removeObjectForKey:@"library.favoritePDFPaths"];

@@ -493,16 +493,7 @@ static const NSUInteger kMaxUndoSteps = 45;
 }
 
 + (BOOL)hasSavedAnnotationsForPDFPath:(NSString *)pdfPath {
-    NSString *path = [self annotationFilePathForPDFPath:pdfPath];
-    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
-        return NO;
-    }
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
-    if (![dict isKindOfClass:[NSDictionary class]]) return YES;
-    NSDictionary *pages = [dict[@"pages"] isKindOfClass:[NSDictionary class]] ? dict[@"pages"] : nil;
-    NSDictionary *notes = [dict[@"notes"] isKindOfClass:[NSDictionary class]] ? dict[@"notes"] : nil;
-    NSArray *bms = [dict[@"bookmarks"] isKindOfClass:[NSArray class]] ? dict[@"bookmarks"] : nil;
-    return (pages.count > 0 || notes.count > 0 || bms.count > 0);
+    return PDFReadLibraryAnnotationSummary(pdfPath, [self documentsDirectory], [NSUserDefaults standardUserDefaults], NULL);
 }
 
 + (NSInteger)savedLastPageForPDFPath:(NSString *)pdfPath {
