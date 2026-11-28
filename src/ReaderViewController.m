@@ -86,6 +86,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     BOOL _pagesReady;
     BOOL _didRestoreInitialPage;
     BOOL _isClosing;
+    NSInteger _displayedPageIndex;
 
     // Preferences & tool state
     ReaderTool _tool;
@@ -162,6 +163,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     if (self) {
         _pdfPath = [pdfPath copy];
         _pageFrames = [NSMutableArray array];
+        _displayedPageIndex = NSNotFound;
         _loadedPages = [NSMutableDictionary dictionary];
         _swatchButtons = [NSMutableArray array];
         _currentMatchIndex = -1;
@@ -595,6 +597,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     _redoBtn     = [self makeDockIconButton:PDFIconRedo() action:@selector(redoTapped)];
     _trashBtn    = [self makeDockIconButton:PDFIconTrash() action:@selector(trashTapped)];
     _bookmarkBtn = [self makeDockIconButton:PDFIconBookmark(NO) action:@selector(bookmarkTapped)];
+    [_bookmarkBtn setImage:PDFIconBookmark(YES) forState:UIControlStateSelected];
     _searchBtn   = [self makeDockIconButton:PDFIconSearch() action:@selector(searchButtonTapped)];
     _optionsBtn  = [self makeDockIconButton:PDFIconCrop() action:@selector(optionsTapped)];
     _shareBtn    = [self makeDockIconButton:PDFIconShare() action:@selector(shareTapped)];
@@ -1010,26 +1013,32 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     return pv;
 }
 
-- (void)updateVisiblePagesForceRender:(BOOL)forceRender {
-    if (!_pagesReady || _pageFrames.count == 0) return;
-
-    CGRect vis = [self currentViewportInContentCoords];
-    CGFloat vh = MAX(vis.size.height, 300.0f);
-    // Tuned specifically for iPad 3 1GB RAM: render ±0.65 viewport, keep ±1.20 viewport (~3-4 pages max in memory!)
-    CGRect renderWindow = CGRectInset(vis, 0.0f, -vh * 0.65f);
-    CGRect keepWindow   = CGRectInset(vis, 0.0f, -vh * 1.25f);
+- (void)renderPagesInRect:(CGRect)window excludingRect:(CGRect)excluded forceRender:(BOOL)forceRender {
     CGFloat zoom = _scrollView.zoomScale;
-
-    NSUInteger first = [self firstPageEndingAtOrAfterY:CGRectGetMinY(renderWindow)];
+    NSUInteger first = [self firstPageEndingAtOrAfterY:CGRectGetMinY(window)];
     for (NSUInteger i = first; i < _pageFrames.count; i++) {
         CGRect pf = [_pageFrames[i] CGRectValue];
-        if (CGRectGetMinY(pf) > CGRectGetMaxY(renderWindow)) break;
-        if (CGRectIntersectsRect(pf, renderWindow)) {
+        if (CGRectGetMinY(pf) > CGRectGetMaxY(window)) break;
+        if (CGRectIntersectsRect(pf, window) && !CGRectIntersectsRect(pf, excluded)) {
             PageView *pv = [self ensurePageViewLoadedAtIndex:(NSInteger)i];
             if (forceRender || ![pv hasLoadedBitmap]) {
                 [pv renderContentWithZoomScale:zoom];
             }
         }
+    }
+}
+
+- (void)updateVisiblePagesForceRender:(BOOL)forceRender {
+    if (!_pagesReady || _pageFrames.count == 0) return;
+
+    CGRect vis = [self currentViewportInContentCoords];
+    CGFloat vh = MAX(vis.size.height, 300.0f);
+    CGRect keepWindow = CGRectInset(vis, 0.0f, -vh * 1.25f);
+    // A complex offscreen PDF can occupy the serial render queue for seconds.
+    [self renderPagesInRect:vis excludingRect:CGRectNull forceRender:forceRender];
+    if (!_scrollView.dragging && !_scrollView.decelerating && !_scrollView.zooming) {
+        CGRect prefetch = CGRectInset(vis, 0.0f, -vh * 0.65f);
+        [self renderPagesInRect:prefetch excludingRect:vis forceRender:forceRender];
     }
     for (NSNumber *key in [_loadedPages allKeys]) {
         PageView *pv = _loadedPages[key];
@@ -1041,17 +1050,25 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     }
 
     NSInteger curPage = [self currentCenteredPageIndex];
+    if (_displayedPageIndex == curPage) return;
+    _displayedPageIndex = curPage;
     _store.lastPageIndex = curPage;
 
     NSString *pillTitle = [NSString stringWithFormat:@"%ld / %ld", (long)(curPage + 1), (long)_doc.pageCount];
-    if (![[_pagePillBtn titleForState:UIControlStateNormal] isEqualToString:pillTitle]) {
-        [_pagePillBtn setTitle:pillTitle forState:UIControlStateNormal];
-        [self updatePagePillFrame];
-    }
+    [_pagePillBtn setTitle:pillTitle forState:UIControlStateNormal];
+    [self updatePagePillFrame];
     [self updateBookmarkButtonForPage:curPage];
 }
 
 - (void)scrollViewDidScroll:(UIScrollView *)scrollView {
+    [self updateVisiblePagesForceRender:NO];
+}
+
+- (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate {
+    if (!decelerate) [self updateVisiblePagesForceRender:NO];
+}
+
+- (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView {
     [self updateVisiblePagesForceRender:NO];
 }
 
@@ -1084,14 +1101,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
 }
 
 - (void)scrollViewDidEndZooming:(UIScrollView *)scrollView withView:(UIView *)view atScale:(CGFloat)scale {
-    // Re-sharpen visible pages at the new zoom scale!
-    CGRect vis = [self currentViewportInContentCoords];
-    for (NSNumber *k in _loadedPages) {
-        PageView *pv = _loadedPages[k];
-        if (CGRectIntersectsRect(pv.frame, vis)) {
-            [pv renderContentWithZoomScale:scale];
-        }
-    }
+    [self updateVisiblePagesForceRender:YES];
 }
 
 - (void)jumpToPage:(NSInteger)pageIndex animated:(BOOL)animated {
@@ -1428,7 +1438,8 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
 
 - (void)updateBookmarkButtonForPage:(NSInteger)pageIndex {
     BOOL bm = [_store isPageBookmarked:pageIndex];
-    [_bookmarkBtn setImage:PDFIconBookmark(bm) forState:UIControlStateNormal];
+    if (_bookmarkBtn.selected == bm) return;
+    _bookmarkBtn.selected = bm;
     _bookmarkBtn.tintColor = bm
         ? [UIColor colorWithRed:1.0f green:0.78f blue:0.22f alpha:1.0f]
         : [UIColor colorWithWhite:0.92f alpha:1.0f];

@@ -7,6 +7,7 @@ From the repository root:
 python3 tests/run_stroke_undo.py    # Stroke undo (system GNUstep)
 ./tests/run_ink_render.sh          # Ink render scheduling (system GNUstep)
 ./tests/run_live_geometry.sh       # Live pen/marker geometry (system GNUstep)
+./tests/run_reader_render.sh       # Reader bitmap limits and viewport scheduling (system GNUstep)
 ./tests/run_drag_undo.sh            # Sticky-note drag undo (libobjc2/ARC GNUstep)
 ./tests/run_persistence.sh          # Annotation autosave, lifecycle and retry (libobjc2/ARC GNUstep)
 ```
@@ -57,6 +58,12 @@ The live geometry runner drives the production touch handlers with coalesced
 samples, recording path commands and layer settings instead of pixels. It
 checks that the active tip follows accepted samples, segments join across batch
 boundaries, marker opacity applies once, and a fast down/up dash keeps its end.
+
+The reader render runner exercises the production raster sizing code across
+ordinary and extreme aspect ratios. It also drives the reader's viewport
+methods with fake pages, checking visible-before-prefetch ordering, no new
+prefetch during motion, offscreen eviction, and HUD updates on page changes.
+It measures neither Core Graphics decode time nor on-device frame rate.
 
 ## Sticky-note drag undo (`run_drag_undo.sh`)
 

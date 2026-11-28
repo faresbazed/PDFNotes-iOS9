@@ -1,4 +1,5 @@
 #import "PDFDoc.h"
+#import "PDFRasterSize.h"
 #import <CoreGraphics/CoreGraphics.h>
 #import <math.h>
 
@@ -242,7 +243,8 @@ static CGPDFOperatorTableRef PDFSharedOperatorTable(void) {
         } else {
             result = CGSizeMake(box.size.width, box.size.height);
         }
-        if (result.width <= 1.0f || result.height <= 1.0f) {
+        if (!isfinite(result.width) || !isfinite(result.height) ||
+            result.width <= 1.0f || result.height <= 1.0f) {
             result = CGSizeMake(612.0f, 792.0f);
         }
     }
@@ -349,12 +351,13 @@ static CGPDFOperatorTableRef PDFSharedOperatorTable(void) {
         }
 
         CGSize pageSz = [self pageSizeAtIndex:index];
-        if (pageSz.width <= 1.0f || pageSz.height <= 1.0f) {
+        PDFRasterSize sample = PDFTrimSampleSize(pageSz.width, pageSz.height);
+        // Too few samples on the short axis to distinguish content from margins.
+        if (sample.width < 8 || sample.height < 8) {
             return CGRectMake(0.0f, 0.0f, 1.0f, 1.0f);
         }
 
-        int w = 200;
-        int h = MAX(8, (int)floorf((float)((pageSz.height * 200.0f) / pageSz.width)));
+        int w = sample.width, h = sample.height;
         size_t bytesPerRow = (size_t)w * 4u;
         NSMutableData *buf = [NSMutableData dataWithLength:bytesPerRow * (size_t)h];
         if (!buf) return CGRectMake(0.0f, 0.0f, 1.0f, 1.0f);
@@ -379,9 +382,8 @@ static CGPDFOperatorTableRef PDFSharedOperatorTable(void) {
         [_pdfLock lock];
         CGPDFPageRef page = CGPDFDocumentGetPage(_pdf, (size_t)(index + 1));
         if (page) {
-            CGFloat scale = (CGFloat)w / pageSz.width;
             CGContextSaveGState(ctx);
-            CGContextScaleCTM(ctx, scale, scale);
+            CGContextScaleCTM(ctx, w / pageSz.width, h / pageSz.height);
             CGAffineTransform pdfXform = CGPDFPageGetDrawingTransform(page,
                                                                       kCGPDFCropBox,
                                                                       CGRectMake(0.0f, 0.0f, pageSz.width, pageSz.height),
@@ -477,8 +479,16 @@ static CGPDFOperatorTableRef PDFSharedOperatorTable(void) {
                  region:(CGRect)region
              pixelWidth:(CGFloat)pixelWidth
                   theme:(PDFReadingTheme)theme {
+    return [self renderPage:index region:region pixelWidth:pixelWidth maxSide:PDFPageMaxSide theme:theme];
+}
+
+- (UIImage *)renderPage:(NSInteger)index
+                 region:(CGRect)region
+             pixelWidth:(CGFloat)pixelWidth
+                maxSide:(int)maxSide
+                  theme:(PDFReadingTheme)theme {
     @autoreleasepool {
-        if (!_pdf || _isLocked || index < 0 || index >= _pageCount || pixelWidth < 8.0f) {
+        if (!_pdf || _isLocked || index < 0 || index >= _pageCount) {
             return nil;
         }
 
@@ -489,18 +499,9 @@ static CGPDFOperatorTableRef PDFSharedOperatorTable(void) {
         CGFloat cropH = pageSz.height * regH;
         if (cropW < 1.0f || cropH < 1.0f) return nil;
 
-        // Cap maximum pixel dimension to protect iPad 3 1GB RAM & A5X texture limits (max 2560px)
-        CGFloat maxDim = 2560.0f;
-        CGFloat pw = floorf((float)pixelWidth);
-        CGFloat ph = MAX(8.0f, floorf((float)((cropH * pw) / cropW)));
-        if (pw > maxDim) {
-            ph = MAX(8.0f, floorf((float)(ph * (maxDim / pw))));
-            pw = maxDim;
-        }
-        if (ph > maxDim) {
-            pw = MAX(8.0f, floorf((float)(pw * (maxDim / ph))));
-            ph = maxDim;
-        }
+        PDFRasterSize raster = PDFRasterFit(cropW, cropH, pixelWidth, maxSide, PDFPageMaxPixels);
+        if (!raster.width || !raster.height) return nil;
+        CGFloat pw = raster.width, ph = raster.height;
 
         CGSize ctxSize = CGSizeMake(pw, ph);
         UIGraphicsBeginImageContextWithOptions(ctxSize, YES, 1.0f);
@@ -519,13 +520,13 @@ static CGPDFOperatorTableRef PDFSharedOperatorTable(void) {
         CGPDFPageRef page = CGPDFDocumentGetPage(_pdf, (size_t)(index + 1));
         if (page) {
             CGContextSaveGState(ctx);
-            CGFloat scale = pw / cropW;
-            CGAffineTransform flipCrop = CGAffineTransformMake(scale,
+            CGFloat scaleX = pw / cropW, scaleY = ph / cropH;
+            CGAffineTransform flipCrop = CGAffineTransformMake(scaleX,
                                                                0.0f,
                                                                0.0f,
-                                                               -scale,
-                                                               -scale * region.origin.x * pageSz.width,
-                                                               scale * (1.0f - region.origin.y) * pageSz.height);
+                                                               -scaleY,
+                                                               -scaleX * region.origin.x * pageSz.width,
+                                                               scaleY * (1.0f - region.origin.y) * pageSz.height);
             CGContextConcatCTM(ctx, flipCrop);
 
             CGAffineTransform pdfXform = CGPDFPageGetDrawingTransform(page,
@@ -561,11 +562,10 @@ static CGPDFOperatorTableRef PDFSharedOperatorTable(void) {
 }
 
 - (UIImage *)renderThumbnailAtIndex:(NSInteger)index maxPixelSide:(CGFloat)maxPixelSide {
-    CGSize sz = [self pageSizeAtIndex:index];
-    if (sz.width <= 0.0f || sz.height <= 0.0f) return nil;
-    CGFloat pw = (sz.width >= sz.height) ? maxPixelSide : floorf((float)(maxPixelSide * (sz.width / sz.height)));
-    pw = MAX(32.0f, pw);
-    return [self renderPage:index region:CGRectMake(0.0f, 0.0f, 1.0f, 1.0f) pixelWidth:pw theme:PDFReadingThemePaper];
+    if (!isfinite(maxPixelSide) || maxPixelSide < 1) return nil;
+    int side = (int)MIN(maxPixelSide, PDFPageMaxSide);
+    return [self renderPage:index region:CGRectMake(0, 0, 1, 1)
+                 pixelWidth:side maxSide:side theme:PDFReadingThemePaper];
 }
 
 #pragma mark - PDF Outline (Table of Contents)
