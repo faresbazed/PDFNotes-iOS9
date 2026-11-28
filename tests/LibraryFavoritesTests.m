@@ -40,6 +40,9 @@ int main(void) { @autoreleasepool {
         PDFSetLibraryFavorite(path, YES, docs, defaults);
     }
     Check(PDFLibraryFavoritePaths(docs, defaults).count == 0, "unfavorite removes star; invalid paths are not added");
+    PDFSetLibraryFavorite(root, YES, docs, defaults);
+    PDFRelocateLibraryFavorites(root, @"/Documents/.Private.pdf", NO, docs, defaults);
+    Check(!PDFLibraryFavoritePaths(docs, defaults).count, "renaming a favorite to a hidden filename clears its old star");
 
     NSFileManager *fm = [NSFileManager defaultManager];
     docs = [[NSTemporaryDirectory() stringByResolvingSymlinksInPath] stringByAppendingPathComponent:[NSUUID UUID].UUIDString];

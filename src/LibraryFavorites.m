@@ -69,7 +69,7 @@ void PDFSetLibraryFavorite(NSString *path, BOOL favorite, NSString *documents, N
 void PDFRelocateLibraryFavorites(NSString *from, NSString *to, BOOL directory, NSString *documents, NSUserDefaults *defaults) {
     NSString *old = RelativeEntry(from, documents, nil);
     NSString *dest = to ? RelativeEntry(to, documents, nil) : nil;
-    if (!old.length || (to && !dest.length)) return;
+    if (!old.length) return;
     NSSet *saved = SavedPaths(documents, defaults);
     NSMutableSet *paths = [NSMutableSet setWithSet:saved];
     NSString *prefix = [old stringByAppendingString:@"/"];
