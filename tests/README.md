@@ -16,6 +16,13 @@ All tests use clang and GNUstep Foundation; none requires an iOS SDK or tests
 rendering or UIKit behavior. The two GNUstep installations remain separate
 because Ubuntu's stock GCC runtime cannot compile the app's ARC/weak references.
 
+The library listing regression in `tests/run.sh` creates a folder of 400 PDFs,
+including a sparse 512 MiB file, with hard-linked 512 KiB annotation fixtures.
+It exercises the production scanner's folder, search and favorites scopes,
+cancellation and visible-row metadata. When `strace` is available it also
+checks that a folder scan never opens PDF or annotation contents. This tests
+the I/O behavior, not navigation timing on a physical iPad.
+
 ## Annotation files (`run.sh`)
 
 Compiles the production Foundation-only annotation file helper used by

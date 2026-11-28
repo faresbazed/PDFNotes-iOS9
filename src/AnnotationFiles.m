@@ -46,6 +46,23 @@ static NSString *AnnotationFile(NSString *path, NSString *documents) {
     return [[documents stringByAppendingPathComponent:@"Annotations"] stringByAppendingPathComponent:[PDFAnnotationKey(path, documents) stringByAppendingPathExtension:@"plist"]];
 }
 
+BOOL PDFReadLibraryAnnotationSummary(NSString *pdfPath, NSString *documents, NSUserDefaults *defaults, NSInteger *lastPage) {
+    NSString *key = PDFAnnotationKey(pdfPath, documents);
+    NSString *plist = [[documents stringByAppendingPathComponent:@"Annotations"] stringByAppendingPathComponent:[key stringByAppendingPathExtension:@"plist"]];
+    NSDictionary *data = [NSDictionary dictionaryWithContentsOfFile:plist];
+    if (lastPage) {
+        id page = [defaults objectForKey:[@"lastPage." stringByAppendingString:key]] ?: [data objectForKey:@"lastPage"];
+        *lastPage = [page respondsToSelector:@selector(integerValue)] ? [page integerValue] : 0;
+    }
+    if (!data) return [[NSFileManager defaultManager] fileExistsAtPath:plist];
+    for (NSString *field in @[@"pages", @"notes", @"bookmarks"]) {
+        id value = [data objectForKey:field];
+        Class expected = [field isEqualToString:@"bookmarks"] ? [NSArray class] : [NSDictionary class];
+        if ([value isKindOfClass:expected] && [value count] > 0) return YES;
+    }
+    return NO;
+}
+
 // v1/v2.0 keyed annotations by file name alone. That file belongs to a document only when it is
 // the sole library PDF with that name; otherwise it is another document's (or an ambiguous) file.
 NSString *PDFLegacyAnnotationFile(NSString *pdfPath, NSString *documents) {
