@@ -13,8 +13,9 @@ NSArray<NSNumber *> *PDFSavedPageRows(NSIndexSet *bookmarks, NSIndexSet *annotat
                                      PDFSavedPageFilter filter, NSInteger pageCount);
 void PDFRecordPageJump(NSMutableArray<NSNumber *> *history, NSInteger from, NSInteger to, NSInteger pageCount);
 NSUInteger PDFJumpBackIndex(NSArray<NSNumber *> *history, NSInteger currentPage);
-CGFloat PDFPageEdgePadding(CGFloat pageHeight, CGFloat viewportHeight, CGFloat minimum);
-CGFloat PDFPageJumpOffset(CGFloat pageTop, CGFloat pageHeight, CGFloat viewportHeight, CGFloat contentHeight, CGFloat topMargin);
+typedef struct { CGFloat start, end; } PDFDocumentBounds;
+CGFloat PDFPageEdgePadding(CGFloat pageHeight, CGFloat zoomScale, CGFloat viewportHeight, CGFloat minimum);
+CGFloat PDFPageJumpOffset(CGFloat pageTop, CGFloat pageHeight, CGFloat viewportHeight, PDFDocumentBounds bounds, CGFloat topMargin);
 
 typedef NS_ENUM(NSInteger, PDFReadingReference) {
     PDFReadingTopLine, PDFReadingSlideCenter, PDFReadingDocumentStart, PDFReadingDocumentEnd,
@@ -26,7 +27,7 @@ typedef struct {
     PDFReadingReference reference;
 } PDFReadingAnchor;
 
-PDFReadingReference PDFReadingReferenceForViewport(CGFloat viewportTop, CGFloat viewportHeight, CGFloat contentHeight,
+PDFReadingReference PDFReadingReferenceForViewport(CGFloat viewportTop, CGFloat viewportHeight, PDFDocumentBounds bounds,
                                                  CGFloat centeredPageTop, CGFloat centeredPageHeight);
 CGFloat PDFRestoreReadingOffset(PDFReadingAnchor anchor, CGFloat pageTop, CGFloat pageHeight,
-                                CGFloat viewportHeight, CGFloat contentHeight);
+                                CGFloat viewportHeight, PDFDocumentBounds bounds);

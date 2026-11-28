@@ -282,6 +282,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
+    self.automaticallyAdjustsScrollViewInsets = NO;
     [self updateCanvasBackground];
 
     _scrollView = [[UIScrollView alloc] initWithFrame:self.view.bounds];
@@ -900,7 +901,6 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
         if (self->_pagesReady) {
             self->_lastLayoutSize = size;
             [self->_scrollView setZoomScale:1.0f animated:NO];
-            self->_scrollView.contentInset = UIEdgeInsetsZero;
             [self rebuildPageFramesForContainerSize:size];
             [self restoreReadingAnchor:anchor forContainerSize:size];
         }
@@ -919,7 +919,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     if (CGRectEqualToRect(viewport, _restoredViewport)) return _restoredAnchor;
     NSInteger page = [self currentCenteredPageIndex];
     CGRect frame = [_pageFrames[(NSUInteger)page] CGRectValue];
-    PDFReadingReference reference = PDFReadingReferenceForViewport(viewport.origin.y, viewport.size.height, _contentView.bounds.size.height,
+    PDFReadingReference reference = PDFReadingReferenceForViewport(viewport.origin.y, viewport.size.height, [self documentBounds],
                                                                  frame.origin.y, frame.size.height);
     CGFloat y = CGRectGetMidY(viewport);
     if (reference == PDFReadingTopLine) {
@@ -931,9 +931,12 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
 }
 
 - (void)restoreReadingAnchor:(PDFReadingAnchor)anchor forContainerSize:(CGSize)containerSize {
-    if ((NSUInteger)anchor.page >= _pageFrames.count) return;
+    if ((NSUInteger)anchor.page >= _pageFrames.count) {
+        _scrollView.contentOffset = CGPointMake(0, -_scrollView.contentInset.top);
+        return;
+    }
     CGRect frame = [_pageFrames[(NSUInteger)anchor.page] CGRectValue];
-    CGFloat y = PDFRestoreReadingOffset(anchor, frame.origin.y, frame.size.height, containerSize.height, _scrollView.contentSize.height);
+    CGFloat y = PDFRestoreReadingOffset(anchor, frame.origin.y, frame.size.height, containerSize.height, [self documentBounds]);
     _scrollView.contentOffset = CGPointMake(0, y);
     _restoredAnchor = anchor;
     _restoredViewport = (CGRect){_scrollView.contentOffset, containerSize};
@@ -955,7 +958,6 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
         CGFloat effW = MAX(1.0f, fullSz.width * trim.size.width);
         CGFloat effH = MAX(1.0f, fullSz.height * trim.size.height);
         CGFloat pageH = MAX(40.0f, floorf((float)((effH / effW) * pageW)));
-        if (i == 0) y = PDFPageEdgePadding(pageH, containerSize.height, 80.0f);
 
         CGRect frame = CGRectMake(sidePad, y, pageW, pageH);
         [_pageFrames addObject:[NSValue valueWithCGRect:frame]];
@@ -966,18 +968,18 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
             loaded.theme = _theme;
             loaded.frame = frame;
         }
-        y += pageH + (i == count - 1 ? PDFPageEdgePadding(pageH, containerSize.height, gap + 48.0f) : gap);
+        y += pageH + (i == count - 1 ? 0 : gap);
     }
 
     _contentView.frame = CGRectMake(0.0f, 0.0f, containerSize.width, y);
     _scrollView.contentSize = CGSizeMake(containerSize.width, y);
+    [self updatePageInsetsForSize:containerSize];
 }
 
 - (void)layoutPagesPreservingAnchor:(BOOL)preserveAnchor {
     PDFReadingAnchor anchor = preserveAnchor ? [self readingAnchor] : (PDFReadingAnchor){ NSNotFound, 0, 0 };
 
     [_scrollView setZoomScale:1.0f animated:NO];
-    _scrollView.contentInset = UIEdgeInsetsZero;
     CGSize sz = self.view.bounds.size;
     [self rebuildPageFramesForContainerSize:sz];
 
@@ -986,11 +988,17 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
 
 #pragma mark - Virtualized Page Window & Scroll/Zoom Delegates
 
+- (PDFDocumentBounds)documentBounds {
+    CGFloat scale = MAX(_scrollView.zoomScale, 0.01f);
+    return (PDFDocumentBounds){ -_scrollView.contentInset.top / scale,
+        _contentView.bounds.size.height + _scrollView.contentInset.bottom / scale };
+}
+
 - (CGRect)currentViewportInContentCoords {
     CGFloat scale = MAX(_scrollView.zoomScale, 0.01f);
     CGRect vis;
-    vis.origin.x = (_scrollView.contentOffset.x + _scrollView.contentInset.left) / scale;
-    vis.origin.y = (_scrollView.contentOffset.y + _scrollView.contentInset.top) / scale;
+    vis.origin.x = _scrollView.contentOffset.x / scale;
+    vis.origin.y = _scrollView.contentOffset.y / scale;
     vis.size.width = _scrollView.bounds.size.width / scale;
     vis.size.height = _scrollView.bounds.size.height / scale;
     return vis;
@@ -1121,11 +1129,16 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
 }
 
 - (void)scrollViewDidZoom:(UIScrollView *)scrollView {
-    CGSize boundsSize = scrollView.bounds.size;
-    CGSize contentSize = scrollView.contentSize;
-    CGFloat offsetX = (boundsSize.width > contentSize.width) ? floorf((float)((boundsSize.width - contentSize.width) * 0.5f)) : 0.0f;
-    CGFloat offsetY = (boundsSize.height > contentSize.height) ? floorf((float)((boundsSize.height - contentSize.height) * 0.5f)) : 0.0f;
-    scrollView.contentInset = UIEdgeInsetsMake(offsetY, offsetX, offsetY, offsetX);
+    [self updatePageInsetsForSize:scrollView.bounds.size];
+}
+
+- (void)updatePageInsetsForSize:(CGSize)size {
+    if (!_pageFrames.count) return;
+    CGFloat scale = _scrollView.zoomScale;
+    CGFloat x = MAX(0, (size.width - _scrollView.contentSize.width) * 0.5f);
+    CGFloat top = PDFPageEdgePadding([_pageFrames.firstObject CGRectValue].size.height, scale, size.height, 80);
+    CGFloat bottom = PDFPageEdgePadding([_pageFrames.lastObject CGRectValue].size.height, scale, size.height, 62);
+    _scrollView.contentInset = UIEdgeInsetsMake(top, x, bottom, x);
 }
 
 - (void)scrollViewDidEndZooming:(UIScrollView *)scrollView withView:(UIView *)view atScale:(CGFloat)scale {
@@ -1137,12 +1150,12 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     _restoredViewport = CGRectNull;
     if (_scrollView.zoomScale != 1.0f) {
         [_scrollView setZoomScale:1.0f animated:NO];
-        _scrollView.contentInset = UIEdgeInsetsZero;
+        [self updatePageInsetsForSize:_scrollView.bounds.size];
     }
     CGRect pf = [_pageFrames[(NSUInteger)pageIndex] CGRectValue];
     CGFloat topMargin = _dockHidden ? 18.0f : 78.0f;
     CGFloat targetY = PDFPageJumpOffset(pf.origin.y, pf.size.height, _scrollView.bounds.size.height,
-                                        _scrollView.contentSize.height, topMargin);
+                                        [self documentBounds], topMargin);
     [_scrollView setContentOffset:CGPointMake(0.0f, targetY) animated:animated];
     if (!animated) {
         [self updateVisiblePagesForceRender:NO];

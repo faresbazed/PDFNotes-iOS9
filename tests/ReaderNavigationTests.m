@@ -1,5 +1,7 @@
 #import "ReaderNavigation.h"
 
+static PDFDocumentBounds Doc(CGFloat height) { return (PDFDocumentBounds){0, height}; }
+
 static int failures;
 static void Check(BOOL ok, const char *message) {
     printf("%s %s\n", ok ? "PASS" : "FAIL", message);
@@ -38,38 +40,42 @@ int main(void) { @autoreleasepool {
     for (NSInteger p = 0; p < 25; p++) PDFRecordPageJump(history, p, p + 1, 26);
     Check(history.count == 16 && [history.firstObject integerValue] == 9 && [history.lastObject integerValue] == 24,
           "only the newest 16 origins are retained");
-    Check(PDFPageJumpOffset(900, 200, 1000, 2500, 78) == 500,
+    Check(PDFPageJumpOffset(900, 200, 1000, Doc(2500), 78) == 500,
           "jump back centers a short slide instead of the following page");
-    Check(PDFPageJumpOffset(900, 1500, 1000, 2500, 78) == 822,
+    Check(PDFPageJumpOffset(900, 1500, 1000, Doc(2500), 78) == 822,
           "tall pages still open at their top below the dock");
-    CGFloat firstTop = PDFPageEdgePadding(100, 1000, 80);
-    CGFloat lastTop = firstTop + 100 + 14 + 1500 + 14;
-    CGFloat total = lastTop + 100 + PDFPageEdgePadding(100, 1000, 62);
-    Check(PDFPageJumpOffset(firstTop, 100, 1000, total, 78) + 500 == firstTop + 50 &&
-          PDFPageJumpOffset(lastTop, 100, 1000, total, 78) + 500 == lastTop + 50,
-          "returning to a short first or last slide centers that slide at reset zoom");
-    Check(PDFPageEdgePadding(1500, 1000, 80) == 80 && PDFPageEdgePadding(1500, 1000, 62) == 62,
-          "tall document edges keep their existing gutters");
-    Check(PDFPageJumpOffset(80, 100, 1000, 2500, 18) == 0 &&
-          PDFPageJumpOffset(2300, 100, 1000, 2500, 18) == 1500 &&
-          PDFPageJumpOffset(80, 100, 1000, 242, 78) == 0, "jump offsets respect both document edges");
-    PDFReadingAnchor slide = {6, 0.5, PDFReadingReferenceForViewport(500, 1000, 2500, 900, 200)};
-    Check(slide.reference == PDFReadingSlideCenter && PDFRestoreReadingOffset(slide, 1500, 320, 720, 4000) == 1300,
+    CGFloat lastTop = 100 + 14 + 1500 + 14;
+    for (NSUInteger zoom = 1; zoom <= 4; ++zoom) {
+        CGFloat top = PDFPageEdgePadding(100, zoom, 1000, 80);
+        CGFloat bottom = PDFPageEdgePadding(100, zoom, 1000, 62);
+        PDFDocumentBounds bounds = {-top / zoom, lastTop + 100 + bottom / zoom};
+        CGFloat viewport = 1000.0 / zoom;
+        Check(fabs(PDFPageJumpOffset(0, 100, viewport, bounds, 78.0 / zoom) + viewport / 2 - 50) < 0.001 &&
+              fabs(PDFPageJumpOffset(lastTop, 100, viewport, bounds, 78.0 / zoom) + viewport / 2 - lastTop - 50) < 0.001 &&
+              top < 1000 && bottom < 1000, "short slides stay visible at either scroll limit from 1x through 4x");
+    }
+    Check(PDFPageEdgePadding(1500, 4, 1000, 80) == 80 && PDFPageEdgePadding(1500, 4, 1000, 62) == 62,
+          "gaps at tall end pages do not grow with zoom");
+    Check(PDFPageJumpOffset(80, 100, 1000, Doc(2500), 18) == 0 &&
+          PDFPageJumpOffset(2300, 100, 1000, Doc(2500), 18) == 1500 &&
+          PDFPageJumpOffset(80, 100, 1000, Doc(242), 78) == 0, "jump offsets respect both document edges");
+    PDFReadingAnchor slide = {6, 0.5, PDFReadingReferenceForViewport(500, 1000, Doc(2500), 900, 200)};
+    Check(slide.reference == PDFReadingSlideCenter && PDFRestoreReadingOffset(slide, 1500, 320, 720, Doc(4000)) == 1300,
           "a centered short slide stays centered after rotation");
-    PDFReadingAnchor shifted = {6, 0.625, PDFReadingReferenceForViewport(525, 1000, 2500, 900, 200)};
-    Check(shifted.reference == PDFReadingSlideCenter && PDFRestoreReadingOffset(shifted, 1500, 320, 720, 4000) == 1340,
+    PDFReadingAnchor shifted = {6, 0.625, PDFReadingReferenceForViewport(525, 1000, Doc(2500), 900, 200)};
+    Check(shifted.reference == PDFReadingSlideCenter && PDFRestoreReadingOffset(shifted, 1500, 320, 720, Doc(4000)) == 1340,
           "a small scroll on a short slide preserves the point under the viewport center");
-    PDFReadingAnchor topLine = {5, 0.9, PDFReadingReferenceForViewport(1800, 1000, 5000, 2000, 2000)};
-    PDFReadingAnchor roundTrip = {6, 0.75, PDFReadingReferenceForViewport(1000, 1000, 5000, 900, 800)};
-    Check(PDFRestoreReadingOffset(roundTrip, 1600, 1080, 720, 6000) == 2050 &&
-          PDFRestoreReadingOffset(roundTrip, 900, 800, 1000, 5000) == 1000,
+    PDFReadingAnchor topLine = {5, 0.9, PDFReadingReferenceForViewport(1800, 1000, Doc(5000), 2000, 2000)};
+    PDFReadingAnchor roundTrip = {6, 0.75, PDFReadingReferenceForViewport(1000, 1000, Doc(5000), 900, 800)};
+    Check(PDFRestoreReadingOffset(roundTrip, 1600, 1080, 720, Doc(6000)) == 2050 &&
+          PDFRestoreReadingOffset(roundTrip, 900, 800, 1000, Doc(5000)) == 1000,
           "reusing the restored anchor returns to the same line when a slide fits in only one orientation");
-    Check(topLine.reference == PDFReadingTopLine && PDFRestoreReadingOffset(topLine, 0, 3000, 720, 6000) == 2700,
+    Check(topLine.reference == PDFReadingTopLine && PDFRestoreReadingOffset(topLine, 0, 3000, 720, Doc(6000)) == 2700,
           "across a tall page break relayout follows the top line, not the next page");
-    PDFReadingAnchor start = {0, 0, PDFReadingReferenceForViewport(0, 1000, 2500, 80, 840)};
-    PDFReadingAnchor end = {2, 0, PDFReadingReferenceForViewport(1500, 1000, 2500, 1600, 840)};
-    Check(start.reference == PDFReadingDocumentStart && PDFRestoreReadingOffset(start, 80, 1200, 720, 4000) == 0 &&
-          end.reference == PDFReadingDocumentEnd && PDFRestoreReadingOffset(end, 2700, 1200, 720, 4000) == 3280,
+    PDFReadingAnchor start = {0, 0, PDFReadingReferenceForViewport(0, 1000, Doc(2500), 80, 840)};
+    PDFReadingAnchor end = {2, 0, PDFReadingReferenceForViewport(1500, 1000, Doc(2500), 1600, 840)};
+    Check(start.reference == PDFReadingDocumentStart && PDFRestoreReadingOffset(start, 80, 1200, 720, Doc(4000)) == 0 &&
+          end.reference == PDFReadingDocumentEnd && PDFRestoreReadingOffset(end, 2700, 1200, 720, Doc(4000)) == 3280,
           "rotation keeps the document start and end pinned when short pages grow");
     return failures ? 1 : 0;
 }}
