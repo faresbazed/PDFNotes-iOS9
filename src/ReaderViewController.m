@@ -154,6 +154,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     UIButton *_overlayActionBtn;
 
     PDFCancelToken *_trimCancelToken;
+    PDFCancelToken *_openToken;
     PDFCancelToken *_exportCancelToken;
 }
 
@@ -172,6 +173,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
 
 - (void)dealloc {
     _isClosing = YES;
+    [_openToken cancel];
     [_hideTimer invalidate];
     [_trimCancelToken cancel];
     [_searchToken cancel];
@@ -306,10 +308,40 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     [self setupDockAndHUD];
     [self setupStylePanel];
     [self setupSearchBar];
+}
 
-    _store = [[AnnotationStore alloc] initWithPDFPath:_pdfPath];
-    _doc = [[PDFDoc alloc] initWithPath:_pdfPath];
+- (void)startOpeningDocument {
+    _loadingOverlay.hidden = NO;
+    _loadingLabel.text = @"Opening PDF and annotations…";
+    [_spinner startAnimating];
+    NSString *path = _pdfPath;
+    PDFCancelToken *token = [[PDFCancelToken alloc] init];
+    _openToken = token;
+    static dispatch_queue_t openQueue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ openQueue = dispatch_queue_create("com.pdfnotes.open", DISPATCH_QUEUE_SERIAL); });
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(openQueue, ^{
+        @autoreleasepool {
+            if (token.isCancelled) return;
+            PDFDoc *doc = [[PDFDoc alloc] initWithPath:path];
+            if (token.isCancelled) return;
+            AnnotationStore *store = [[AnnotationStore alloc] initWithPDFPath:path];
+            if (token.isCancelled) return;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                __strong typeof(self) reader = weakSelf;
+                if (!reader || token.isCancelled || reader->_openToken != token) return;
+                reader->_openToken = nil;
+                reader->_store = store;
+                reader->_doc = doc;
+                [reader documentDidOpen];
+            });
+        }
+    });
+}
 
+- (void)documentDidOpen {
+    [_spinner stopAnimating];
     if (!_doc) {
         [self showFatalError:@"Could not open this PDF file."];
         return;
@@ -329,6 +361,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     _isClosing = NO;
+    if (!_store && !_openToken) [self startOpeningDocument];
     [self.navigationController setNavigationBarHidden:YES animated:animated];
     [self setNeedsStatusBarAppearanceUpdate];
 }
@@ -341,6 +374,8 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
 
     if (self.isMovingFromParentViewController || self.isBeingDismissed) {
         _isClosing = YES;
+        [_openToken cancel];
+        _openToken = nil;
         [_trimCancelToken cancel];
         [_searchToken cancel];
         [_exportCancelToken cancel];

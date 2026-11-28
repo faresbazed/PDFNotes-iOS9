@@ -1,5 +1,38 @@
 #import <UIKit/UIKit.h>
 
+@implementation UIApplication {
+    NSMutableDictionary *_tasks;
+    NSUInteger _nextTask;
+}
++ (instancetype)sharedApplication {
+    static UIApplication *app;
+    @synchronized (self) { if (!app) app = [self new]; }
+    return app;
+}
+- (UIBackgroundTaskIdentifier)beginBackgroundTaskWithName:(NSString *)name expirationHandler:(void (^)(void))handler {
+    @synchronized (self) {
+        if (self.testDenyTasks) return UIBackgroundTaskInvalid;
+        if (!_tasks) _tasks = [NSMutableDictionary dictionary];
+        _tasks[@(++_nextTask)] = [handler copy];
+        return _nextTask;
+    }
+}
+- (void)endBackgroundTask:(UIBackgroundTaskIdentifier)task {
+    @synchronized (self) {
+        NSCAssert(_tasks[@(task)], @"Background task ended twice or invalid");
+        [_tasks removeObjectForKey:@(task)];
+    }
+}
+- (NSUInteger)testTaskCount {
+    @synchronized (self) { return _tasks.count; }
+}
+- (void)testExpireTasks {
+    NSArray *handlers;
+    @synchronized (self) { handlers = _tasks.allValues; }
+    for (void (^handler)(void) in handlers) handler();
+}
+@end
+
 @implementation NSOperationQueue (TestQoS)
 - (void)setQualityOfService:(NSQualityOfService)quality {}
 @end

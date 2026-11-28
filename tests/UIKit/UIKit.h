@@ -18,6 +18,18 @@ enum { kCGLineCapRound, kCGLineJoinRound };
 #define UIApplicationWillResignActiveNotification @"test.resign"
 #define UIApplicationDidEnterBackgroundNotification @"test.background"
 #define UIApplicationWillTerminateNotification @"test.terminate"
+#define UIApplicationDidBecomeActiveNotification @"test.active"
+typedef NSUInteger UIBackgroundTaskIdentifier;
+#define UIBackgroundTaskInvalid NSUIntegerMax
+
+@interface UIApplication : NSObject
++ (instancetype)sharedApplication;
+- (UIBackgroundTaskIdentifier)beginBackgroundTaskWithName:(NSString *)name expirationHandler:(void (^)(void))handler;
+- (void)endBackgroundTask:(UIBackgroundTaskIdentifier)task;
+@property BOOL testDenyTasks;
+@property (readonly) NSUInteger testTaskCount;
+- (void)testExpireTasks;
+@end
 
 @interface NSOperationQueue (TestQoS)
 - (void)setQualityOfService:(NSQualityOfService)quality;
