@@ -1,10 +1,10 @@
-# PDF Notes v3.3 (iPad 3 / iOS 9.3.6 Edition)
+# PDF Notes v4.0 (iPad 3 / iOS 9.3.6 Edition)
 
 Lightweight, native Objective-C PDF reader, handwritten annotator, and notebook app engineered specifically for **iPad 3 (`armv7` 32-bit, A5X SoC, 2048×1536 Retina display, 1 GB RAM) running iOS 9.0–9.3.6**.
 
 In the library, swipe left on a PDF or notebook and tap **Favorite**, or long-press it and choose **Add to Favorites**. Tap **Favorites** at the library root to search and sort starred documents from all folders; tap **All Items** to return. Renaming or moving a document in the app keeps its star. Duplicates start unstarred.
 
-## Reader navigation (source build)
+## Reader navigation
 
 - Tap the page counter, then **Saved**. Choose **All**, **Bookmarks**, or **Annotated**. A page with both a bookmark and a note or drawing appears in both filters, but only once in All.
 - After jumping from the page browser, Go to Page, or a search result, open **Reader Options → Jump Back to Page …**. You can retrace up to 16 jumps in the current document. Scrolling, reopening the document, and undo/redo do not add entries.
