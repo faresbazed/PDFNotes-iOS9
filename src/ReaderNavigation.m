@@ -1,4 +1,5 @@
 #import "ReaderNavigation.h"
+#import <math.h>
 
 NSArray<NSNumber *> *PDFSavedPageRows(NSIndexSet *bookmarks, NSIndexSet *annotations,
                                      PDFSavedPageFilter filter, NSInteger pageCount) {
@@ -42,16 +43,20 @@ CGFloat PDFPageJumpOffset(CGFloat pageTop, CGFloat pageHeight, CGFloat viewportH
     return MAX(0, MIN(offset, contentHeight - viewportHeight));
 }
 
-PDFReadingAnchor PDFCaptureReadingAnchor(NSInteger page, CGFloat pageTop, CGFloat pageHeight,
-                                        CGFloat viewportTop, CGFloat viewportHeight) {
-    CGFloat y = pageHeight < viewportHeight ? viewportTop + viewportHeight * 0.5f : viewportTop;
-    y = MAX(pageTop, MIN(y, pageTop + pageHeight));
-    return (PDFReadingAnchor){ page, (y - pageTop) / MAX(1, pageHeight),
-                              (y - viewportTop) / MAX(1, viewportHeight) };
+PDFReadingReference PDFReadingReferenceForViewport(CGFloat viewportTop, CGFloat viewportHeight, CGFloat contentHeight,
+                                                 CGFloat centeredPageTop, CGFloat centeredPageHeight) {
+    if (viewportTop <= 0.5f) return PDFReadingDocumentStart;
+    if (viewportTop + viewportHeight >= contentHeight - 0.5f) return PDFReadingDocumentEnd;
+    CGFloat centeredOffset = centeredPageTop + (centeredPageHeight - viewportHeight) * 0.5f;
+    if (centeredPageHeight < viewportHeight && fabs(viewportTop - centeredOffset) <= 0.5f) return PDFReadingSlideCenter;
+    return PDFReadingTopLine;
 }
 
 CGFloat PDFRestoreReadingOffset(PDFReadingAnchor anchor, CGFloat pageTop, CGFloat pageHeight,
                                 CGFloat viewportHeight, CGFloat contentHeight) {
-    CGFloat y = pageTop + anchor.pageFraction * pageHeight - anchor.viewportFraction * viewportHeight;
+    if (anchor.reference == PDFReadingDocumentStart) return 0;
+    if (anchor.reference == PDFReadingDocumentEnd) return MAX(0, contentHeight - viewportHeight);
+    CGFloat y = anchor.reference == PDFReadingSlideCenter ? pageTop + (pageHeight - viewportHeight) * 0.5f
+                                                        : pageTop + anchor.pageFraction * pageHeight;
     return MAX(0, MIN(y, contentHeight - viewportHeight));
 }

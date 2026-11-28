@@ -877,7 +877,13 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     NSInteger page = [self currentCenteredPageIndex];
     CGRect frame = [_pageFrames[(NSUInteger)page] CGRectValue];
     CGRect viewport = [self currentViewportInContentCoords];
-    return PDFCaptureReadingAnchor(page, frame.origin.y, frame.size.height, viewport.origin.y, viewport.size.height);
+    PDFReadingReference reference = PDFReadingReferenceForViewport(viewport.origin.y, viewport.size.height, _contentView.bounds.size.height,
+                                                                 frame.origin.y, frame.size.height);
+    if (reference != PDFReadingTopLine) return (PDFReadingAnchor){ page, 0, reference };
+    NSUInteger topPage = MIN([self firstPageEndingAtOrAfterY:viewport.origin.y], _pageFrames.count - 1);
+    frame = [_pageFrames[topPage] CGRectValue];
+    CGFloat fraction = (viewport.origin.y - frame.origin.y) / MAX(1, frame.size.height);
+    return (PDFReadingAnchor){ (NSInteger)topPage, fraction, reference };
 }
 
 - (void)restoreReadingAnchor:(PDFReadingAnchor)anchor forContainerSize:(CGSize)containerSize {

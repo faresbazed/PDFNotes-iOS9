@@ -15,13 +15,17 @@ void PDFRecordPageJump(NSMutableArray<NSNumber *> *history, NSInteger from, NSIn
 NSUInteger PDFJumpBackIndex(NSArray<NSNumber *> *history, NSInteger currentPage);
 CGFloat PDFPageJumpOffset(CGFloat pageTop, CGFloat pageHeight, CGFloat viewportHeight, CGFloat contentHeight, CGFloat topMargin);
 
+typedef NS_ENUM(NSInteger, PDFReadingReference) {
+    PDFReadingTopLine, PDFReadingSlideCenter, PDFReadingDocumentStart, PDFReadingDocumentEnd,
+};
+
 typedef struct {
     NSInteger page;
     CGFloat pageFraction;
-    CGFloat viewportFraction;
+    PDFReadingReference reference;
 } PDFReadingAnchor;
 
-PDFReadingAnchor PDFCaptureReadingAnchor(NSInteger page, CGFloat pageTop, CGFloat pageHeight,
-                                        CGFloat viewportTop, CGFloat viewportHeight);
+PDFReadingReference PDFReadingReferenceForViewport(CGFloat viewportTop, CGFloat viewportHeight, CGFloat contentHeight,
+                                                 CGFloat centeredPageTop, CGFloat centeredPageHeight);
 CGFloat PDFRestoreReadingOffset(PDFReadingAnchor anchor, CGFloat pageTop, CGFloat pageHeight,
                                 CGFloat viewportHeight, CGFloat contentHeight);

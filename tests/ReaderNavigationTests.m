@@ -45,11 +45,16 @@ int main(void) { @autoreleasepool {
     Check(PDFPageJumpOffset(80, 100, 1000, 2500, 18) == 0 &&
           PDFPageJumpOffset(2300, 100, 1000, 2500, 18) == 1500 &&
           PDFPageJumpOffset(80, 100, 1000, 242, 78) == 0, "jump offsets respect both document edges");
-    PDFReadingAnchor slide = PDFCaptureReadingAnchor(6, 900, 200, 500, 1000);
-    Check(slide.page == 6 && PDFRestoreReadingOffset(slide, 1500, 320, 720, 4000) == 1300,
+    PDFReadingAnchor slide = {6, 0, PDFReadingReferenceForViewport(500, 1000, 2500, 900, 200)};
+    Check(slide.reference == PDFReadingSlideCenter && PDFRestoreReadingOffset(slide, 1500, 320, 720, 4000) == 1300,
           "a centered short slide stays centered after rotation");
-    PDFReadingAnchor tall = PDFCaptureReadingAnchor(6, 900, 2000, 1200, 1000);
-    Check(PDFRestoreReadingOffset(tall, 1500, 3000, 720, 5000) == 1950,
-          "relayout preserves the top reading line on a tall page");
+    PDFReadingAnchor topLine = {5, 0.9, PDFReadingReferenceForViewport(1800, 1000, 5000, 2000, 2000)};
+    Check(topLine.reference == PDFReadingTopLine && PDFRestoreReadingOffset(topLine, 0, 3000, 720, 6000) == 2700,
+          "across a tall page break relayout follows the top line, not the next page");
+    PDFReadingAnchor start = {0, 0, PDFReadingReferenceForViewport(0, 1000, 2500, 80, 840)};
+    PDFReadingAnchor end = {2, 0, PDFReadingReferenceForViewport(1500, 1000, 2500, 1600, 840)};
+    Check(start.reference == PDFReadingDocumentStart && PDFRestoreReadingOffset(start, 80, 1200, 720, 4000) == 0 &&
+          end.reference == PDFReadingDocumentEnd && PDFRestoreReadingOffset(end, 2700, 1200, 720, 4000) == 3280,
+          "rotation keeps the document start and end pinned when short pages grow");
     return failures ? 1 : 0;
 }}
