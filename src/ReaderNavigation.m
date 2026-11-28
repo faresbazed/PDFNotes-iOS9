@@ -41,3 +41,17 @@ CGFloat PDFPageJumpOffset(CGFloat pageTop, CGFloat pageHeight, CGFloat viewportH
     CGFloat offset = MIN(pageTop - topMargin, centered);
     return MAX(0, MIN(offset, contentHeight - viewportHeight));
 }
+
+PDFReadingAnchor PDFCaptureReadingAnchor(NSInteger page, CGFloat pageTop, CGFloat pageHeight,
+                                        CGFloat viewportTop, CGFloat viewportHeight) {
+    CGFloat y = pageHeight < viewportHeight ? viewportTop + viewportHeight * 0.5f : viewportTop;
+    y = MAX(pageTop, MIN(y, pageTop + pageHeight));
+    return (PDFReadingAnchor){ page, (y - pageTop) / MAX(1, pageHeight),
+                              (y - viewportTop) / MAX(1, viewportHeight) };
+}
+
+CGFloat PDFRestoreReadingOffset(PDFReadingAnchor anchor, CGFloat pageTop, CGFloat pageHeight,
+                                CGFloat viewportHeight, CGFloat contentHeight) {
+    CGFloat y = pageTop + anchor.pageFraction * pageHeight - anchor.viewportFraction * viewportHeight;
+    return MAX(0, MIN(y, contentHeight - viewportHeight));
+}

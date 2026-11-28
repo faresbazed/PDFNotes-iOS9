@@ -45,5 +45,11 @@ int main(void) { @autoreleasepool {
     Check(PDFPageJumpOffset(80, 100, 1000, 2500, 18) == 0 &&
           PDFPageJumpOffset(2300, 100, 1000, 2500, 18) == 1500 &&
           PDFPageJumpOffset(80, 100, 1000, 242, 78) == 0, "jump offsets respect both document edges");
+    PDFReadingAnchor slide = PDFCaptureReadingAnchor(6, 900, 200, 500, 1000);
+    Check(slide.page == 6 && PDFRestoreReadingOffset(slide, 1500, 320, 720, 4000) == 1300,
+          "a centered short slide stays centered after rotation");
+    PDFReadingAnchor tall = PDFCaptureReadingAnchor(6, 900, 2000, 1200, 1000);
+    Check(PDFRestoreReadingOffset(tall, 1500, 3000, 720, 5000) == 1950,
+          "relayout preserves the top reading line on a tall page");
     return failures ? 1 : 0;
 }}

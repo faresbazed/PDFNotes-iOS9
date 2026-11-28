@@ -854,11 +854,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     [super viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
 
     // Capture exact reading anchor BEFORE zoomScale changes!
-    NSInteger anchorPage = 0;
-    CGFloat anchorFraction = 0.0f;
-    if (_pagesReady && _pageFrames.count > 0) {
-        [self captureScrollAnchorPage:&anchorPage fraction:&anchorFraction];
-    }
+    PDFReadingAnchor anchor = [self readingAnchor];
 
     [coordinator animateAlongsideTransition:^(id<UIViewControllerTransitionCoordinatorContext> context) {
         if (self->_pagesReady) {
@@ -866,7 +862,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
             [self->_scrollView setZoomScale:1.0f animated:NO];
             self->_scrollView.contentInset = UIEdgeInsetsZero;
             [self rebuildPageFramesForContainerSize:size];
-            [self restoreScrollAnchorPage:anchorPage fraction:anchorFraction forContainerSize:size];
+            [self restoreReadingAnchor:anchor forContainerSize:size];
         }
         [self layoutHUDChrome];
     } completion:^(id<UIViewControllerTransitionCoordinatorContext> context) {
@@ -876,34 +872,19 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     }];
 }
 
-- (void)captureScrollAnchorPage:(NSInteger *)outPage fraction:(CGFloat *)outFraction {
-    CGFloat scale = MAX(_scrollView.zoomScale, 0.01f);
-    CGFloat unscaledTop = (_scrollView.contentOffset.y + _scrollView.contentInset.top) / scale;
-    NSInteger foundPage = 0;
-    CGFloat frac = 0.0f;
-
-    for (NSUInteger i = 0; i < _pageFrames.count; i++) {
-        CGRect pf = [_pageFrames[i] CGRectValue];
-        if (CGRectGetMaxY(pf) >= unscaledTop) {
-            foundPage = (NSInteger)i;
-            if (pf.size.height > 1.0f) {
-                frac = (unscaledTop - pf.origin.y) / pf.size.height;
-                frac = MAX(-0.2f, MIN(1.0f, frac));
-            }
-            break;
-        }
-    }
-    *outPage = foundPage;
-    *outFraction = frac;
+- (PDFReadingAnchor)readingAnchor {
+    if (!_pagesReady || !_pageFrames.count) return (PDFReadingAnchor){ NSNotFound, 0, 0 };
+    NSInteger page = [self currentCenteredPageIndex];
+    CGRect frame = [_pageFrames[(NSUInteger)page] CGRectValue];
+    CGRect viewport = [self currentViewportInContentCoords];
+    return PDFCaptureReadingAnchor(page, frame.origin.y, frame.size.height, viewport.origin.y, viewport.size.height);
 }
 
-- (void)restoreScrollAnchorPage:(NSInteger)anchorPage fraction:(CGFloat)anchorFraction forContainerSize:(CGSize)containerSize {
-    if (anchorPage < 0 || (NSUInteger)anchorPage >= _pageFrames.count) return;
-    CGRect pf = [_pageFrames[(NSUInteger)anchorPage] CGRectValue];
-    CGFloat rawY = pf.origin.y + anchorFraction * pf.size.height;
-    CGFloat maxOffset = MAX(0.0f, _scrollView.contentSize.height - containerSize.height);
-    CGFloat clampedY = MAX(0.0f, MIN(maxOffset, rawY));
-    _scrollView.contentOffset = CGPointMake(0.0f, clampedY);
+- (void)restoreReadingAnchor:(PDFReadingAnchor)anchor forContainerSize:(CGSize)containerSize {
+    if ((NSUInteger)anchor.page >= _pageFrames.count) return;
+    CGRect frame = [_pageFrames[(NSUInteger)anchor.page] CGRectValue];
+    CGFloat y = PDFRestoreReadingOffset(anchor, frame.origin.y, frame.size.height, containerSize.height, _scrollView.contentSize.height);
+    _scrollView.contentOffset = CGPointMake(0, y);
 }
 
 - (void)rebuildPageFramesForContainerSize:(CGSize)containerSize {
@@ -941,20 +922,14 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
 }
 
 - (void)layoutPagesPreservingAnchor:(BOOL)preserveAnchor {
-    NSInteger anchorPage = 0;
-    CGFloat anchorFraction = 0.0f;
-    if (preserveAnchor && _pageFrames.count > 0) {
-        [self captureScrollAnchorPage:&anchorPage fraction:&anchorFraction];
-    }
+    PDFReadingAnchor anchor = preserveAnchor ? [self readingAnchor] : (PDFReadingAnchor){ NSNotFound, 0, 0 };
 
     [_scrollView setZoomScale:1.0f animated:NO];
     _scrollView.contentInset = UIEdgeInsetsZero;
     CGSize sz = self.view.bounds.size;
     [self rebuildPageFramesForContainerSize:sz];
 
-    if (preserveAnchor && _pageFrames.count > 0) {
-        [self restoreScrollAnchorPage:anchorPage fraction:anchorFraction forContainerSize:sz];
-    }
+    [self restoreReadingAnchor:anchor forContainerSize:sz];
 }
 
 #pragma mark - Virtualized Page Window & Scroll/Zoom Delegates

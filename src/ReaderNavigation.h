@@ -14,3 +14,14 @@ NSArray<NSNumber *> *PDFSavedPageRows(NSIndexSet *bookmarks, NSIndexSet *annotat
 void PDFRecordPageJump(NSMutableArray<NSNumber *> *history, NSInteger from, NSInteger to, NSInteger pageCount);
 NSUInteger PDFJumpBackIndex(NSArray<NSNumber *> *history, NSInteger currentPage);
 CGFloat PDFPageJumpOffset(CGFloat pageTop, CGFloat pageHeight, CGFloat viewportHeight, CGFloat contentHeight, CGFloat topMargin);
+
+typedef struct {
+    NSInteger page;
+    CGFloat pageFraction;
+    CGFloat viewportFraction;
+} PDFReadingAnchor;
+
+PDFReadingAnchor PDFCaptureReadingAnchor(NSInteger page, CGFloat pageTop, CGFloat pageHeight,
+                                        CGFloat viewportTop, CGFloat viewportHeight);
+CGFloat PDFRestoreReadingOffset(PDFReadingAnchor anchor, CGFloat pageTop, CGFloat pageHeight,
+                                CGFloat viewportHeight, CGFloat contentHeight);
