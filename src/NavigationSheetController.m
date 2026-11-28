@@ -1,5 +1,6 @@
 #import "NavigationSheetController.h"
 #import "PDFIcons.h"
+#import "ReaderNavigation.h"
 
 @interface PDFThumbCell : UICollectionViewCell
 @property (nonatomic, strong) UIImageView *thumbImageView;
@@ -88,7 +89,11 @@
     UILabel *_emptyLabel;
 
     NSArray<PDFOutlineItem *> *_outlineItems;
-    NSMutableArray<NSNumber *> *_savedPages; // Union of bookmarked + annotated pages
+    NSArray<NSNumber *> *_savedPages;
+    UISegmentedControl *_savedFilter;
+    UIView *_savedFilterHeader;
+    NSIndexSet *_bookmarks;
+    NSIndexSet *_annotations;
     NSCache *_thumbCache;
     BOOL _didInitialScroll;
 }
@@ -110,10 +115,10 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
+    self.edgesForExtendedLayout = UIRectEdgeNone;
     self.view.backgroundColor = [UIColor colorWithRed:0.95f green:0.95f blue:0.97f alpha:1.0f];
 
     _outlineItems = [_doc outlineItems] ?: @[];
-    [self rebuildSavedPagesList];
 
     _modeControl = [[UISegmentedControl alloc] initWithItems:@[ @"Pages", @"Outline", @"Saved" ]];
     _modeControl.selectedSegmentIndex = 0;
@@ -150,6 +155,15 @@
     _tableView.tableFooterView = [[UIView alloc] initWithFrame:CGRectZero];
     [self.view addSubview:_tableView];
 
+    _savedFilterHeader = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 48)];
+    _savedFilter = [[UISegmentedControl alloc] initWithItems:@[@"All", @"Bookmarks", @"Annotated"]];
+    _savedFilter.frame = CGRectInset(_savedFilterHeader.bounds, 12, 8);
+    _savedFilter.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    _savedFilter.accessibilityLabel = @"Filter saved pages";
+    _savedFilter.selectedSegmentIndex = PDFSavedPageFilterAll;
+    [_savedFilter addTarget:self action:@selector(savedFilterChanged) forControlEvents:UIControlEventValueChanged];
+    [_savedFilterHeader addSubview:_savedFilter];
+
     _emptyLabel = [[UILabel alloc] initWithFrame:CGRectInset(self.view.bounds, 32.0f, 32.0f)];
     _emptyLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     _emptyLabel.textAlignment = NSTextAlignmentCenter;
@@ -174,32 +188,33 @@
     [_thumbCache removeAllObjects];
 }
 
-- (void)rebuildSavedPagesList {
-    NSMutableIndexSet *combined = [NSMutableIndexSet indexSet];
-    [combined addIndexes:[_store bookmarkedPages]];
-    [combined addIndexes:[_store annotatedPages]];
-    _savedPages = [NSMutableArray array];
-    [combined enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
-        if ((NSInteger)idx < _doc.pageCount) {
-            [_savedPages addObject:@(idx)];
-        }
-    }];
+- (void)savedFilterChanged {
+    if (!_bookmarks) _bookmarks = [_store bookmarkedPages];
+    if (!_annotations) _annotations = [_store annotatedPages];
+    PDFSavedPageFilter filter = _savedFilter.selectedSegmentIndex;
+    _savedPages = PDFSavedPageRows(_bookmarks, _annotations, filter, _doc.pageCount);
+    _emptyLabel.hidden = (_savedPages.count > 0);
+    switch (filter) {
+        case PDFSavedPageFilterBookmarks: _emptyLabel.text = @"No bookmarks yet. Tap the bookmark in the reader to save a page."; break;
+        case PDFSavedPageFilterAnnotations: _emptyLabel.text = @"No annotated pages yet. Draw or add a sticky note to a page."; break;
+        default: _emptyLabel.text = @"No saved pages yet. Bookmark a page, draw on it, or add a sticky note."; break;
+    }
+    [_tableView reloadData];
 }
 
 - (void)modeChanged:(UISegmentedControl *)seg {
     NSInteger idx = seg.selectedSegmentIndex;
     _collectionView.hidden = (idx != 0);
     _tableView.hidden = (idx == 0);
+    _tableView.tableHeaderView = (idx == 2) ? _savedFilterHeader : nil;
+    _tableView.contentOffset = CGPointMake(0, -_tableView.contentInset.top);
 
     if (idx == 1) {
         _emptyLabel.hidden = (_outlineItems.count > 0);
         _emptyLabel.text = @"This PDF does not contain an embedded Table of Contents.";
         [_tableView reloadData];
     } else if (idx == 2) {
-        [self rebuildSavedPagesList];
-        _emptyLabel.hidden = (_savedPages.count > 0);
-        _emptyLabel.text = @"No bookmarked or annotated pages yet.\n\nTap the bookmark icon in the reader or draw on any page to see it listed here.";
-        [_tableView reloadData];
+        [self savedFilterChanged];
     } else {
         _emptyLabel.hidden = YES;
     }
