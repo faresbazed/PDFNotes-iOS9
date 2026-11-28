@@ -1,4 +1,5 @@
 #import "LibraryListing.h"
+#import "LibraryFavorites.h"
 #import "AnnotationFiles.h"
 #include <unistd.h>
 
@@ -86,8 +87,17 @@ int main(int argc, const char *argv[]) { @autoreleasepool {
     }
     Check(foundFolder, "link to a folder appears as a navigable folder even with a PDF suffix");
     items = PDFScanLibrary(linkedFolder, docs, NO, nil, nil);
-    Check(items.count == 1 && [[[items firstObject] fullPath] isEqual:[linkedFolder stringByAppendingPathComponent:@"Notes.PDF"]],
-          "browsing a linked folder preserves its visible path");
+    PDFLibraryItem *throughLink = items.firstObject;
+    Check(items.count == 1 && [throughLink.fullPath isEqual:nested], "children of a linked folder keep their document identity");
     Check(PDFScanLibrary(docs, docs, YES, nil, nil).count == 404, "recursive search lists the folder link without following it twice");
+    [defaults setObject:@[@"Week alias.pdf/Notes.PDF", @"Course/Week/Notes.PDF"] forKey:@"library.favoritePDFPaths"];
+    Check([PDFLibraryFavoritePaths(docs, defaults) isEqual:[NSSet setWithObject:nested]], "legacy alias and original stars identify one favorite");
+    NSString *newPath = [throughLink.fullPath.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"Renamed.pdf"];
+    Check([[NSFileManager defaultManager] moveItemAtPath:throughLink.fullPath toPath:newPath error:NULL], "rename through the linked folder row");
+    PDFRelocateLibraryFavorites(throughLink.fullPath, newPath, NO, docs, defaults);
+    NSString *renamed = [folder stringByAppendingPathComponent:@"Week/Renamed.pdf"];
+    Check([PDFLibraryFavoritePaths(docs, defaults) isEqual:[NSSet setWithObject:renamed]], "rename through folder link preserves the original star");
+    PDFSetLibraryFavorite([linkedFolder stringByAppendingPathComponent:@"Renamed.pdf"], NO, docs, defaults);
+    Check(!PDFLibraryFavoritePaths(docs, defaults).count, "unfavorite through link removes the original star");
     return failures != 0;
 }}

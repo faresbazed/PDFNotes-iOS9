@@ -36,6 +36,8 @@ NSMutableArray<PDFLibraryItem *> *PDFScanLibrary(NSString *directory, NSString *
         return items;
     }
 
+    // Children have the same identity whether reached through a folder or its link.
+    directory = [directory stringByResolvingSymlinksInPath];
     BOOL root = [directory isEqualToString:documents];
     NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:directory];
     NSString *relative;
