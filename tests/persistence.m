@@ -45,6 +45,13 @@ static Stroke *MakeStroke(Class type, int points) {
     return s;
 }
 
+static void WaitForProtectedSaves(void) {
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:3];
+    while ([UIApplication sharedApplication].testTaskCount && deadline.timeIntervalSinceNow > 0)
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+    Check(![UIApplication sharedApplication].testTaskCount, "each background assertion ends after its write");
+}
+
 static void TestConcurrentEdits(void) {
     NSString *pdf = [documents stringByAppendingPathComponent:@"Ink.pdf"];
     TempStore *store = [[TempStore alloc] initWithPDFPath:pdf];
@@ -82,14 +89,61 @@ static void TestConcurrentEdits(void) {
           "in-flight snapshot retains its own strokes, note position, bookmarks and page");
 
     [[NSNotificationCenter defaultCenter] postNotificationName:UIApplicationDidEnterBackgroundNotification object:nil];
+    WaitForProtectedSaves();
     TempStore *reopened = [[TempStore alloc] initWithPDFPath:pdf];
     Check([reopened strokesForPage:1].count == 2 && [reopened notesForPage:1][0].normalizedPosition.x == 0.75 &&
-          ![reopened isPageBookmarked:1] && reopened.lastPageIndex == 2, "background flush persists newer edits before returning");
+          ![reopened isPageBookmarked:1] && reopened.lastPageIndex == 2, "background save persists newer edits before suspension");
     [store clearPage:1];
     [[NSNotificationCenter defaultCenter] postNotificationName:UIApplicationWillResignActiveNotification object:nil];
+    WaitForProtectedSaves();
     Check(![[NSFileManager defaultManager] fileExistsAtPath:path], "clear plus lifecycle flush removes the old sidecar");
 }
 
+static void TestWarmResume(void) {
+    UIApplication *app = [UIApplication sharedApplication];
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    NSString *pdf = [documents stringByAppendingPathComponent:@"Resume.pdf"];
+    TempStore *store = [[TempStore alloc] initWithPDFPath:pdf];
+    [gate lock]; entered = NO; releaseWriter = NO; encodedOnMain = NO; [gate unlock];
+    [store addStroke:MakeStroke(PausingStroke.class, 5) onPage:2];
+    [nc postNotificationName:UIApplicationWillResignActiveNotification object:nil];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:1];
+    BOOL started = NO;
+    while (!started && deadline.timeIntervalSinceNow > 0) {
+        [gate lock]; started = entered; [gate unlock];
+        if (!started) [NSThread sleepForTimeInterval:0.001];
+    }
+    Check(started && !encodedOnMain && app.testTaskCount == 1,
+          "resign returns with the writer held off the main thread under one assertion");
+    [nc postNotificationName:UIApplicationDidEnterBackgroundNotification object:nil];
+    Check(store.snapshots == 1 && app.testTaskCount == 1, "Home does not duplicate the protected resign snapshot");
+    [nc postNotificationName:UIApplicationDidBecomeActiveNotification object:nil];
+    [store addStroke:MakeStroke(Stroke.class, 4) onPage:2];
+    [nc postNotificationName:UIApplicationDidEnterBackgroundNotification object:nil];
+    Check(store.snapshots == 2 && app.testTaskCount == 2,
+          "foreground editing and the next background callback return while the first write is blocked");
+    [gate lock]; releaseWriter = YES; [gate broadcast]; [gate unlock];
+    WaitForProtectedSaves();
+    Check([[[[TempStore alloc] initWithPDFPath:pdf] strokesForPage:2] count] == 2,
+          "relaunch after both protected writes restores the newest edits");
+
+    [gate lock]; releaseWriter = NO; [gate unlock];
+    [store addStroke:MakeStroke(Stroke.class, 3) onPage:2];
+    [nc postNotificationName:UIApplicationWillResignActiveNotification object:nil];
+    [app testExpireTasks];
+    Check(app.testTaskCount == 0, "expiration ends the assertion without waiting for the held writer");
+    [gate lock]; releaseWriter = YES; [gate broadcast]; [gate unlock];
+    [nc postNotificationName:UIApplicationWillTerminateNotification object:nil];
+    Check([[[[TempStore alloc] initWithPDFPath:pdf] strokesForPage:2] count] == 3,
+          "termination drains the outstanding save after expiration");
+
+    app.testDenyTasks = YES;
+    [store addStroke:MakeStroke(Stroke.class, 3) onPage:2];
+    [nc postNotificationName:UIApplicationDidEnterBackgroundNotification object:nil];
+    app.testDenyTasks = NO;
+    Check(app.testTaskCount == 0 && [[[[TempStore alloc] initWithPDFPath:pdf] strokesForPage:2] count] == 4,
+          "denied background time falls back to durable synchronous saving");
+}
 static void TestRetry(void) {
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *pdf = [documents stringByAppendingPathComponent:@"Retry.pdf"];
@@ -168,6 +222,7 @@ int main(void) { @autoreleasepool {
     documents = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     gate = [NSCondition new];
     TestConcurrentEdits();
+    TestWarmResume();
     TestRetry();
     TestOverlongSidecar();
     Benchmark();

@@ -329,6 +329,41 @@ static void PDFExtractRGB(UIColor *color, CGFloat *outR, CGFloat *outG, CGFloat 
 @implementation PDFPageEditAction
 @end
 
+// The save queue and UIKit's expiration handler can finish the same assertion.
+@interface PDFSaveBackgroundTask : NSObject
+- (BOOL)isActive;
+- (void)end;
+@end
+
+@implementation PDFSaveBackgroundTask {
+    UIBackgroundTaskIdentifier _identifier;
+}
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        __weak typeof(self) weakSelf = self;
+        _identifier = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"Save PDF annotations"
+                                                                 expirationHandler:^{ [weakSelf end]; }];
+    }
+    return self;
+}
+
+- (BOOL)isActive {
+    @synchronized (self) { return _identifier != UIBackgroundTaskInvalid; }
+}
+
+- (void)end {
+    UIBackgroundTaskIdentifier identifier;
+    @synchronized (self) {
+        identifier = _identifier;
+        _identifier = UIBackgroundTaskInvalid;
+    }
+    if (identifier != UIBackgroundTaskInvalid) [[UIApplication sharedApplication] endBackgroundTask:identifier];
+}
+
+@end
+
 @interface PDFAnnotationWrite : NSOperation
 @property (nonatomic, copy) NSString *path;
 @property (nonatomic, copy) NSString *legacyPath;
@@ -431,6 +466,7 @@ static const NSUInteger kMaxUndoSteps = 45;
     NSString *_filePath;
     NSOperationQueue *_saveQueue;
     PDFAnnotationWrite *_pendingWrite;
+    PDFSaveBackgroundTask *_saveTask;
 }
 
 + (NSString *)documentsDirectory {
@@ -517,7 +553,8 @@ static const NSUInteger kMaxUndoSteps = 45;
         NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
         [nc addObserver:self selector:@selector(flushForLifecycle:) name:UIApplicationWillResignActiveNotification object:nil];
         [nc addObserver:self selector:@selector(flushForLifecycle:) name:UIApplicationDidEnterBackgroundNotification object:nil];
-        [nc addObserver:self selector:@selector(flushForLifecycle:) name:UIApplicationWillTerminateNotification object:nil];
+        [nc addObserver:self selector:@selector(flushBeforeTermination:) name:UIApplicationWillTerminateNotification object:nil];
+        [nc addObserver:self selector:@selector(retryOnResume:) name:UIApplicationDidBecomeActiveNotification object:nil];
     }
     return self;
 }
@@ -989,6 +1026,13 @@ static const NSUInteger kMaxUndoSteps = 45;
 - (void)reapFinishedWrite {
     if (_pendingWrite && !_pendingWrite.succeeded) _dirty = YES;
     _pendingWrite = nil;
+    _saveTask = nil;
+}
+
+- (void)enqueueSnapshot {
+    _pendingWrite = [self newWrite];
+    _dirty = NO;
+    [_saveQueue addOperation:_pendingWrite];
 }
 
 - (void)autosave {
@@ -999,9 +1043,7 @@ static const NSUInteger kMaxUndoSteps = 45;
     }
     [self reapFinishedWrite];
     if (!_dirty) return;
-    _pendingWrite = [self newWrite];
-    _dirty = NO;
-    [_saveQueue addOperation:_pendingWrite];
+    [self enqueueSnapshot];
 }
 
 - (BOOL)flushSynchronously {
@@ -1017,6 +1059,32 @@ static const NSUInteger kMaxUndoSteps = 45;
 }
 
 - (void)flushForLifecycle:(NSNotification *)notification {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(autosave) object:nil];
+    if (_pendingWrite.isFinished) [self reapFinishedWrite];
+    if (!_dirty && (!_pendingWrite || _saveTask.isActive)) return;
+
+    PDFSaveBackgroundTask *task = [[PDFSaveBackgroundTask alloc] init];
+    if (!task.isActive) {
+        [self flushSynchronously];
+        return;
+    }
+    if (_dirty) {
+        // Replace any queued obsolete snapshot; an already-running writer finishes
+        // before the serial queue can start the newer, complete snapshot.
+        [_pendingWrite cancel];
+        [self enqueueSnapshot];
+    }
+    _saveTask = task;
+    NSBlockOperation *finish = [NSBlockOperation blockOperationWithBlock:^{ [task end]; }];
+    [finish addDependency:_pendingWrite];
+    [_saveQueue addOperation:finish];
+}
+
+- (void)retryOnResume:(NSNotification *)notification {
+    if (_dirty || _pendingWrite) [self scheduleAutosave];
+}
+
+- (void)flushBeforeTermination:(NSNotification *)notification {
     [self flushSynchronously];
 }
 

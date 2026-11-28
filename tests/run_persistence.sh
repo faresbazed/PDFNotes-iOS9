@@ -9,3 +9,5 @@ fi
 OUT="$ROOT/build/tests"
 mkdir -p "$OUT"
 . "$ROOT/tests/arc_model.inc" persistence
+sed -n '/^- (void)startOpeningDocument {$/,/^}$/p' "$ROOT/src/ReaderViewController.m" > "$OUT/reader-open.inc"
+. "$ROOT/tests/arc_model.inc" reader-open
