@@ -1106,9 +1106,9 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     }
     CGRect pf = [_pageFrames[(NSUInteger)pageIndex] CGRectValue];
     CGFloat topMargin = _dockHidden ? 18.0f : 78.0f;
-    CGFloat targetY = MAX(0.0f, pf.origin.y - topMargin);
-    CGFloat maxOffset = MAX(0.0f, _scrollView.contentSize.height - _scrollView.bounds.size.height);
-    [_scrollView setContentOffset:CGPointMake(0.0f, MIN(targetY, maxOffset)) animated:animated];
+    CGFloat targetY = PDFPageJumpOffset(pf.origin.y, pf.size.height, _scrollView.bounds.size.height,
+                                        _scrollView.contentSize.height, topMargin);
+    [_scrollView setContentOffset:CGPointMake(0.0f, targetY) animated:animated];
     if (!animated) {
         [self updateVisiblePagesForceRender:NO];
     }

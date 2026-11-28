@@ -38,5 +38,12 @@ int main(void) { @autoreleasepool {
     for (NSInteger p = 0; p < 25; p++) PDFRecordPageJump(history, p, p + 1, 26);
     Check(history.count == 16 && [history.firstObject integerValue] == 9 && [history.lastObject integerValue] == 24,
           "only the newest 16 origins are retained");
+    Check(PDFPageJumpOffset(900, 200, 1000, 2500, 78) == 500,
+          "jump back centers a short slide instead of the following page");
+    Check(PDFPageJumpOffset(900, 1500, 1000, 2500, 78) == 822,
+          "tall pages still open at their top below the dock");
+    Check(PDFPageJumpOffset(80, 100, 1000, 2500, 18) == 0 &&
+          PDFPageJumpOffset(2300, 100, 1000, 2500, 18) == 1500 &&
+          PDFPageJumpOffset(80, 100, 1000, 242, 78) == 0, "jump offsets respect both document edges");
     return failures ? 1 : 0;
 }}
