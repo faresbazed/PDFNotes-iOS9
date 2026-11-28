@@ -4,6 +4,7 @@
 #import "PDFIcons.h"
 #import "PageView.h"
 #import "NavigationSheetController.h"
+#import "ReaderNavigation.h"
 #import <math.h>
 
 static NSString *const kPrefToolKey         = @"reader.tool";
@@ -145,6 +146,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     PDFCancelToken *_searchToken;
     NSArray<PDFSearchMatch *> *_searchMatches;
     NSInteger _currentMatchIndex;
+    NSMutableArray<NSNumber *> *_jumpHistory;
 
     // Loading / Error / Export overlay (NEVER blocks Back button!)
     UIView *_loadingOverlay;
@@ -164,6 +166,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
         _pageFrames = [NSMutableArray array];
         _loadedPages = [NSMutableDictionary dictionary];
         _swatchButtons = [NSMutableArray array];
+        _jumpHistory = [NSMutableArray array];
         _currentMatchIndex = -1;
         [self loadUserPreferences];
     }
@@ -597,6 +600,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     _bookmarkBtn = [self makeDockIconButton:PDFIconBookmark(NO) action:@selector(bookmarkTapped)];
     _searchBtn   = [self makeDockIconButton:PDFIconSearch() action:@selector(searchButtonTapped)];
     _optionsBtn  = [self makeDockIconButton:PDFIconCrop() action:@selector(optionsTapped)];
+    _optionsBtn.accessibilityLabel = @"Reader options";
     _shareBtn    = [self makeDockIconButton:PDFIconShare() action:@selector(shareTapped)];
 
     NSArray *items = @[
@@ -1477,7 +1481,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     NavigationSheetController *sheet = [[NavigationSheetController alloc] initWithDoc:_doc store:_store currentPage:curPage];
     __weak typeof(self) weakSelf = self;
     sheet.onSelectPage = ^(NSInteger selectedPage) {
-        [weakSelf jumpToPage:selectedPage animated:NO];
+        [weakSelf navigateToPage:selectedPage];
     };
 
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:sheet];
@@ -1485,6 +1489,12 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
         ? UIModalPresentationFormSheet
         : UIModalPresentationFullScreen;
     [self presentViewController:nav animated:YES completion:nil];
+}
+
+- (void)navigateToPage:(NSInteger)pageIndex {
+    if (!_pagesReady) return;
+    PDFRecordPageJump(_jumpHistory, [self currentCenteredPageIndex], pageIndex, _pageFrames.count);
+    [self jumpToPage:pageIndex animated:NO];
 }
 
 - (void)optionsTapped {
@@ -1496,10 +1506,22 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     NSString *sepiaTitle = (_theme == PDFReadingThemeSepia) ? @"✓ Theme: Warm Sepia" : @"Theme: Warm Sepia";
     NSString *nightTitle = (_theme == PDFReadingThemeNight) ? @"✓ Theme: Night Dark" : @"Theme: Night Dark";
 
-    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"Reader Display Options"
+    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"Reader Options"
                                                                 message:nil
                                                          preferredStyle:UIAlertControllerStyleActionSheet];
     __weak typeof(self) weakSelf = self;
+    NSUInteger backIndex = PDFJumpBackIndex(_jumpHistory, [self currentCenteredPageIndex]);
+    if (backIndex != NSNotFound) {
+        NSInteger page = [_jumpHistory[backIndex] integerValue];
+        NSArray *remaining = [_jumpHistory subarrayWithRange:NSMakeRange(0, backIndex)];
+        NSString *title = [NSString stringWithFormat:@"Jump Back to Page %ld", (long)(page + 1)];
+        [ac addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            __strong typeof(self) sSelf = weakSelf;
+            if (!sSelf) return;
+            [sSelf->_jumpHistory setArray:remaining];
+            [sSelf jumpToPage:page animated:NO];
+        }]];
+    }
     [ac addAction:[UIAlertAction actionWithTitle:trimTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
         [weakSelf toggleAutoTrim];
     }]];
@@ -1568,7 +1590,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
         if (!sSelf) return;
         NSInteger p = [ac.textFields.firstObject.text integerValue];
         if (p >= 1 && p <= sSelf->_doc.pageCount) {
-            [sSelf jumpToPage:(p - 1) animated:YES];
+            [sSelf navigateToPage:(p - 1)];
         }
     }]];
     [self presentViewController:ac animated:YES completion:nil];
@@ -1664,7 +1686,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     if (_currentMatchIndex < 0 || (NSUInteger)_currentMatchIndex >= _searchMatches.count) return;
     PDFSearchMatch *m = _searchMatches[(NSUInteger)_currentMatchIndex];
     _searchStatusLabel.text = [NSString stringWithFormat:@"%ld / %lu", (long)(_currentMatchIndex + 1), (unsigned long)_searchMatches.count];
-    [self jumpToPage:m.pageIndex animated:NO];
+    [self navigateToPage:m.pageIndex];
     PageView *pv = [self ensurePageViewLoadedAtIndex:m.pageIndex];
     [pv pulseHighlightBanner:m.snippet];
 }
