@@ -42,6 +42,14 @@ int main(void) { @autoreleasepool {
           "jump back centers a short slide instead of the following page");
     Check(PDFPageJumpOffset(900, 1500, 1000, 2500, 78) == 822,
           "tall pages still open at their top below the dock");
+    CGFloat firstTop = PDFPageEdgePadding(100, 1000, 80);
+    CGFloat lastTop = firstTop + 100 + 14 + 1500 + 14;
+    CGFloat total = lastTop + 100 + PDFPageEdgePadding(100, 1000, 62);
+    Check(PDFPageJumpOffset(firstTop, 100, 1000, total, 78) + 500 == firstTop + 50 &&
+          PDFPageJumpOffset(lastTop, 100, 1000, total, 78) + 500 == lastTop + 50,
+          "returning to a short first or last slide centers that slide at reset zoom");
+    Check(PDFPageEdgePadding(1500, 1000, 80) == 80 && PDFPageEdgePadding(1500, 1000, 62) == 62,
+          "tall document edges keep their existing gutters");
     Check(PDFPageJumpOffset(80, 100, 1000, 2500, 18) == 0 &&
           PDFPageJumpOffset(2300, 100, 1000, 2500, 18) == 1500 &&
           PDFPageJumpOffset(80, 100, 1000, 242, 78) == 0, "jump offsets respect both document edges");

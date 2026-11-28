@@ -36,6 +36,10 @@ NSUInteger PDFJumpBackIndex(NSArray<NSNumber *> *history, NSInteger currentPage)
     return NSNotFound;
 }
 
+CGFloat PDFPageEdgePadding(CGFloat pageHeight, CGFloat viewportHeight, CGFloat minimum) {
+    return MAX(minimum, (viewportHeight - pageHeight) * 0.5f);
+}
+
 CGFloat PDFPageJumpOffset(CGFloat pageTop, CGFloat pageHeight, CGFloat viewportHeight, CGFloat contentHeight, CGFloat topMargin) {
     CGFloat centered = pageTop + (pageHeight - viewportHeight) * 0.5f;
     CGFloat offset = MIN(pageTop - topMargin, centered);

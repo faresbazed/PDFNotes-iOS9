@@ -13,6 +13,7 @@ NSArray<NSNumber *> *PDFSavedPageRows(NSIndexSet *bookmarks, NSIndexSet *annotat
                                      PDFSavedPageFilter filter, NSInteger pageCount);
 void PDFRecordPageJump(NSMutableArray<NSNumber *> *history, NSInteger from, NSInteger to, NSInteger pageCount);
 NSUInteger PDFJumpBackIndex(NSArray<NSNumber *> *history, NSInteger currentPage);
+CGFloat PDFPageEdgePadding(CGFloat pageHeight, CGFloat viewportHeight, CGFloat minimum);
 CGFloat PDFPageJumpOffset(CGFloat pageTop, CGFloat pageHeight, CGFloat viewportHeight, CGFloat contentHeight, CGFloat topMargin);
 
 typedef NS_ENUM(NSInteger, PDFReadingReference) {

@@ -946,7 +946,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
 
     CGFloat sidePad = (containerSize.width >= 600.0f) ? 18.0f : 8.0f;
     CGFloat pageW = MAX(60.0f, containerSize.width - sidePad * 2.0f);
-    CGFloat y = 80.0f; // Top breathing room below floating dock
+    CGFloat y = 0.0f;
     CGFloat gap = 14.0f;
 
     for (NSInteger i = 0; i < count; i++) {
@@ -955,6 +955,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
         CGFloat effW = MAX(1.0f, fullSz.width * trim.size.width);
         CGFloat effH = MAX(1.0f, fullSz.height * trim.size.height);
         CGFloat pageH = MAX(40.0f, floorf((float)((effH / effW) * pageW)));
+        if (i == 0) y = PDFPageEdgePadding(pageH, containerSize.height, 80.0f);
 
         CGRect frame = CGRectMake(sidePad, y, pageW, pageH);
         [_pageFrames addObject:[NSValue valueWithCGRect:frame]];
@@ -965,12 +966,11 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
             loaded.theme = _theme;
             loaded.frame = frame;
         }
-        y += pageH + gap;
+        y += pageH + (i == count - 1 ? PDFPageEdgePadding(pageH, containerSize.height, gap + 48.0f) : gap);
     }
 
-    CGFloat totalH = y + 48.0f;
-    _contentView.frame = CGRectMake(0.0f, 0.0f, containerSize.width, totalH);
-    _scrollView.contentSize = CGSizeMake(containerSize.width, totalH);
+    _contentView.frame = CGRectMake(0.0f, 0.0f, containerSize.width, y);
+    _scrollView.contentSize = CGSizeMake(containerSize.width, y);
 }
 
 - (void)layoutPagesPreservingAnchor:(BOOL)preserveAnchor {
