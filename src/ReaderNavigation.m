@@ -1,5 +1,4 @@
 #import "ReaderNavigation.h"
-#import <math.h>
 
 NSArray<NSNumber *> *PDFSavedPageRows(NSIndexSet *bookmarks, NSIndexSet *annotations,
                                      PDFSavedPageFilter filter, NSInteger pageCount) {
@@ -47,8 +46,10 @@ PDFReadingReference PDFReadingReferenceForViewport(CGFloat viewportTop, CGFloat 
                                                  CGFloat centeredPageTop, CGFloat centeredPageHeight) {
     if (viewportTop <= 0.5f) return PDFReadingDocumentStart;
     if (viewportTop + viewportHeight >= contentHeight - 0.5f) return PDFReadingDocumentEnd;
-    CGFloat centeredOffset = centeredPageTop + (centeredPageHeight - viewportHeight) * 0.5f;
-    if (centeredPageHeight < viewportHeight && fabs(viewportTop - centeredOffset) <= 0.5f) return PDFReadingSlideCenter;
+    CGFloat midY = viewportTop + viewportHeight * 0.5f;
+    if (centeredPageHeight < viewportHeight && midY >= centeredPageTop && midY <= centeredPageTop + centeredPageHeight) {
+        return PDFReadingSlideCenter;
+    }
     return PDFReadingTopLine;
 }
 
@@ -56,7 +57,7 @@ CGFloat PDFRestoreReadingOffset(PDFReadingAnchor anchor, CGFloat pageTop, CGFloa
                                 CGFloat viewportHeight, CGFloat contentHeight) {
     if (anchor.reference == PDFReadingDocumentStart) return 0;
     if (anchor.reference == PDFReadingDocumentEnd) return MAX(0, contentHeight - viewportHeight);
-    CGFloat y = anchor.reference == PDFReadingSlideCenter ? pageTop + (pageHeight - viewportHeight) * 0.5f
-                                                        : pageTop + anchor.pageFraction * pageHeight;
+    CGFloat y = pageTop + anchor.pageFraction * pageHeight;
+    if (anchor.reference == PDFReadingSlideCenter) y -= viewportHeight * 0.5f;
     return MAX(0, MIN(y, contentHeight - viewportHeight));
 }

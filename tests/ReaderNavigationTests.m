@@ -45,9 +45,12 @@ int main(void) { @autoreleasepool {
     Check(PDFPageJumpOffset(80, 100, 1000, 2500, 18) == 0 &&
           PDFPageJumpOffset(2300, 100, 1000, 2500, 18) == 1500 &&
           PDFPageJumpOffset(80, 100, 1000, 242, 78) == 0, "jump offsets respect both document edges");
-    PDFReadingAnchor slide = {6, 0, PDFReadingReferenceForViewport(500, 1000, 2500, 900, 200)};
+    PDFReadingAnchor slide = {6, 0.5, PDFReadingReferenceForViewport(500, 1000, 2500, 900, 200)};
     Check(slide.reference == PDFReadingSlideCenter && PDFRestoreReadingOffset(slide, 1500, 320, 720, 4000) == 1300,
           "a centered short slide stays centered after rotation");
+    PDFReadingAnchor shifted = {6, 0.625, PDFReadingReferenceForViewport(525, 1000, 2500, 900, 200)};
+    Check(shifted.reference == PDFReadingSlideCenter && PDFRestoreReadingOffset(shifted, 1500, 320, 720, 4000) == 1340,
+          "a small scroll on a short slide preserves the point under the viewport center");
     PDFReadingAnchor topLine = {5, 0.9, PDFReadingReferenceForViewport(1800, 1000, 5000, 2000, 2000)};
     Check(topLine.reference == PDFReadingTopLine && PDFRestoreReadingOffset(topLine, 0, 3000, 720, 6000) == 2700,
           "across a tall page break relayout follows the top line, not the next page");
