@@ -40,6 +40,8 @@ typedef NS_ENUM(NSInteger, PDFNotebookTemplate) {
 
 + (dispatch_queue_t)renderQueue;
 + (dispatch_queue_t)utilityQueue;
++ (UIImage *)libraryCoverAtPath:(NSString *)path maxPixelSide:(CGFloat)side
+                     pageCount:(NSInteger *)pageCount cancelToken:(PDFCancelToken *)token;
 
 - (instancetype)initWithPath:(NSString *)path;
 - (BOOL)unlockWithPassword:(NSString *)password;

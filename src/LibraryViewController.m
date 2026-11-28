@@ -6,6 +6,8 @@
 #import "LibraryNames.h"
 #import "LibraryFiles.h"
 #import "LibraryFavorites.h"
+#import "LibraryListing.h"
+#import "AnnotationFiles.h"
 
 typedef NS_ENUM(NSInteger, LibrarySortOrder) {
     LibrarySortByName = 0,
@@ -15,27 +17,12 @@ typedef NS_ENUM(NSInteger, LibrarySortOrder) {
 
 static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
 
-@interface PDFLibraryItem : NSObject
-@property (nonatomic, copy) NSString *name;
-@property (nonatomic, copy) NSString *fullPath;
-@property (nonatomic, copy) NSString *relativeFolder;
-@property (nonatomic, assign) BOOL isDirectory;
-@property (nonatomic, assign) unsigned long long fileSize;
-@property (nonatomic, strong) NSDate *modDate;
-@property (nonatomic, assign) BOOL hasAnnotations;
-@property (nonatomic, assign) NSInteger lastPage;
-@property (nonatomic, assign) NSInteger cachedPageCount; // -1 if not yet queried
-@end
-
-@implementation PDFLibraryItem
-@end
-
 @interface PDFLibraryCell : UITableViewCell
 @property (nonatomic, strong) UIImageView *coverView;
 @property (nonatomic, strong) UILabel *titleLbl;
 @property (nonatomic, strong) UILabel *metaLbl;
 @property (nonatomic, strong) UILabel *badgeLbl;
-@property (nonatomic, copy) NSString *representedPath;
+@property (nonatomic, strong) PDFCancelToken *detailToken;
 @end
 
 @implementation PDFLibraryCell
@@ -111,6 +98,9 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
 
     NSCache *_coverCache;
     NSMutableDictionary<NSString *, NSNumber *> *_pageCountCache;
+    NSOperationQueue *_scanQueue;
+    NSBlockOperation *_scan;
+    BOOL _visible;
 }
 
 - (instancetype)init {
@@ -127,6 +117,9 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
         _coverCache.countLimit = 64;
         _coverCache.totalCostLimit = 4 * 1024 * 1024;
         _pageCountCache = [NSMutableDictionary dictionary];
+        _scanQueue = [[NSOperationQueue alloc] init];
+        _scanQueue.maxConcurrentOperationCount = 1;
+        _scanQueue.qualityOfService = NSQualityOfServiceUtility;
         _sortOrder = (LibrarySortOrder)[[NSUserDefaults standardUserDefaults] integerForKey:kPrefLibrarySortKey];
     }
     return self;
@@ -203,9 +196,19 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
+    _visible = YES;
     [self.navigationController setNavigationBarHidden:NO animated:animated];
     [self sweepInboxIfNeeded];
     [self reloadFiles];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    _visible = NO;
+    [_scan cancel];
+    _scan = nil;
+    for (PDFLibraryCell *cell in _tableView.visibleCells) [cell.detailToken cancel];
+    [_refreshControl endRefreshing];
 }
 
 - (void)didReceiveMemoryWarning {
@@ -214,6 +217,7 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
 }
 
 - (void)appDidBecomeActive {
+    if (!_visible) return;
     [self sweepInboxIfNeeded];
     [self reloadFiles];
 }
@@ -221,7 +225,6 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
 - (void)pullToRefreshTriggered {
     [self sweepInboxIfNeeded];
     [self reloadFiles];
-    [_refreshControl endRefreshing];
 }
 
 #pragma mark - Inbox Import & Directory Scanning
@@ -230,86 +233,8 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
     if ([self isRootLibrary]) PDFImportInboxDocuments([AnnotationStore documentsDirectory]);
 }
 
-- (PDFLibraryItem *)itemAtPath:(NSString *)path relativeFolder:(NSString *)folder isDirectory:(BOOL)isDir {
-    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:NULL];
-    PDFLibraryItem *item = [[PDFLibraryItem alloc] init];
-    item.name = isDir ? path.lastPathComponent : [path.lastPathComponent stringByDeletingPathExtension];
-    item.fullPath = path;
-    item.relativeFolder = folder;
-    item.isDirectory = isDir;
-    item.fileSize = [attrs[NSFileSize] unsignedLongLongValue];
-    item.modDate = attrs[NSFileModificationDate] ?: [NSDate distantPast];
-    item.cachedPageCount = _pageCountCache[path] ? [_pageCountCache[path] integerValue] : -1;
-    if (!isDir) {
-        item.hasAnnotations = [AnnotationStore hasSavedAnnotationsForPDFPath:path];
-        item.lastPage = [AnnotationStore savedLastPageForPDFPath:path];
-    }
-    return item;
-}
-
-- (void)collectItemsInDirectory:(NSString *)dir
-                 relativePrefix:(NSString *)relPrefix
-                      recursive:(BOOL)recursive
-                           into:(NSMutableArray<PDFLibraryItem *> *)outArray {
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray<NSString *> *names = [fm contentsOfDirectoryAtPath:dir error:NULL];
-    NSString *docs = [AnnotationStore documentsDirectory];
-    BOOL atRoot = [[dir stringByResolvingSymlinksInPath] isEqualToString:docs];
-
-    for (NSString *name in names) {
-        if ([name hasPrefix:@"."]) continue;
-        if (atRoot && ([name isEqualToString:@"Inbox"] || [name isEqualToString:@"Annotations"])) {
-            continue;
-        }
-
-        NSString *full = [dir stringByAppendingPathComponent:name];
-        BOOL isDir = NO;
-        if (![fm fileExistsAtPath:full isDirectory:&isDir]) continue;
-
-        if (!isDir && ![[name.pathExtension lowercaseString] isEqualToString:@"pdf"]) {
-            continue;
-        }
-
-        [outArray addObject:[self itemAtPath:full relativeFolder:relPrefix isDirectory:isDir]];
-
-        if (isDir && recursive) {
-            NSString *nextRel = relPrefix.length > 0 ? [relPrefix stringByAppendingPathComponent:name] : name;
-            [self collectItemsInDirectory:full relativePrefix:nextRel recursive:YES into:outArray];
-        }
-    }
-}
-
-- (void)reloadFiles {
-    [_allItems removeAllObjects];
-    NSString *docs = [AnnotationStore documentsDirectory];
-    _favoritePaths = PDFLibraryFavoritePaths(docs, [NSUserDefaults standardUserDefaults]);
-    if (_showingFavorites) {
-        for (NSString *path in PDFAvailableFavoriteDocuments(_favoritePaths, docs)) {
-            NSString *relative = [path substringFromIndex:docs.length + 1];
-            [_allItems addObject:[self itemAtPath:path relativeFolder:relative.stringByDeletingLastPathComponent isDirectory:NO]];
-        }
-    } else {
-        BOOL searchingAll = (_searchQuery.length > 0 && [self isRootLibrary]);
-        [self collectItemsInDirectory:_directoryPath relativePrefix:@"" recursive:searchingAll into:_allItems];
-    }
-    [self applySortAndFilter];
-}
-
-- (void)applySortAndFilter {
-    NSString *q = [_searchQuery stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    [_filteredItems removeAllObjects];
-
-    for (PDFLibraryItem *item in _allItems) {
-        if (q.length > 0) {
-            NSRange r1 = [item.name rangeOfString:q options:(NSCaseInsensitiveSearch | NSDiacriticInsensitiveSearch)];
-            NSRange r2 = [item.relativeFolder rangeOfString:q options:(NSCaseInsensitiveSearch | NSDiacriticInsensitiveSearch)];
-            if (r1.location == NSNotFound && r2.location == NSNotFound) continue;
-        }
-        [_filteredItems addObject:item];
-    }
-
-    LibrarySortOrder order = _sortOrder;
-    [_filteredItems sortUsingComparator:^NSComparisonResult(PDFLibraryItem *a, PDFLibraryItem *b) {
++ (void)sortItems:(NSMutableArray<PDFLibraryItem *> *)items order:(LibrarySortOrder)order {
+    [items sortUsingComparator:^NSComparisonResult(PDFLibraryItem *a, PDFLibraryItem *b) {
         // Always keep folders grouped at the top
         if (a.isDirectory != b.isDirectory) {
             return a.isDirectory ? NSOrderedAscending : NSOrderedDescending;
@@ -324,12 +249,66 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
         }
         return [a.name localizedStandardCompare:b.name];
     }];
+}
+
+- (void)reloadFiles {
+    if (!_visible) return;
+    [_scan cancel];
+    NSBlockOperation *scan = [[NSBlockOperation alloc] init];
+    _scan = scan;
+    NSString *directory = _directoryPath;
+    NSString *docs = [AnnotationStore documentsDirectory];
+    BOOL recursive = _searchQuery.length > 0 && [directory isEqualToString:docs];
+    BOOL favoritesOnly = _showingFavorites;
+    LibrarySortOrder order = _sortOrder;
+    if (!_allItems.count) {
+        _emptyLabel.text = @"Loading library…";
+        _emptyLabel.hidden = NO;
+    }
+    __weak NSBlockOperation *weakScan = scan;
+    __weak typeof(self) weakSelf = self;
+    [scan addExecutionBlock:^{
+        @autoreleasepool {
+            NSBlockOperation *job = weakScan;
+            if (!job || job.cancelled) return;
+            NSSet *favorites = PDFLibraryFavoritePaths(docs, [NSUserDefaults standardUserDefaults]);
+            NSMutableArray *items = PDFScanLibrary(directory, docs, recursive, favoritesOnly ? favorites : nil, job);
+            if (job.cancelled) return;
+            [LibraryViewController sortItems:items order:order];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                __strong typeof(self) owner = weakSelf;
+                if (!owner || owner->_scan != job) return;
+                owner->_scan = nil;
+                owner->_allItems = items;
+                owner->_favoritePaths = favorites;
+                [owner applyFilter];
+                [owner->_refreshControl endRefreshing];
+            });
+        }
+    }];
+    [_scanQueue addOperation:scan];
+}
+
+- (void)applyFilter {
+    NSString *q = [_searchQuery stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    [_filteredItems removeAllObjects];
+
+    for (PDFLibraryItem *item in _allItems) {
+        if (q.length > 0) {
+            NSRange r1 = [item.name rangeOfString:q options:(NSCaseInsensitiveSearch | NSDiacriticInsensitiveSearch)];
+            NSRange r2 = [item.relativeFolder rangeOfString:q options:(NSCaseInsensitiveSearch | NSDiacriticInsensitiveSearch)];
+            if (r1.location == NSNotFound && r2.location == NSNotFound) continue;
+        }
+        [_filteredItems addObject:item];
+    }
 
     [_tableView reloadData];
 
     if (_filteredItems.count == 0) {
         _emptyLabel.hidden = NO;
-        if (_showingFavorites) {
+        if (_scan) {
+            _emptyLabel.text = @"Loading library…";
+        } else if (_showingFavorites) {
             _emptyLabel.text = q.length ? [NSString stringWithFormat:@"No favorites matching \"%@\".", q]
                                         : @"No favorites yet.\n\nIn the library, swipe left on a PDF or notebook and tap Favorite.";
         } else if (q.length > 0) {
@@ -349,6 +328,9 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
     sender.title = _showingFavorites ? @"All Items" : @"Favorites";
     self.title = _showingFavorites ? @"Favorites" : @"PDF Notes";
     _searchBar.placeholder = _showingFavorites ? @"Search favorites…" : @"Search all PDFs & folders…";
+    [_allItems removeAllObjects];
+    [_filteredItems removeAllObjects];
+    [_tableView reloadData];
     [self reloadFiles];
 }
 
@@ -356,7 +338,7 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
     BOOL scopeChanged = (_searchQuery.length == 0) != (searchText.length == 0);
     _searchQuery = [searchText copy];
     if (!_showingFavorites && scopeChanged && [self isRootLibrary]) [self reloadFiles];
-    else [self applySortAndFilter];
+    else [self applyFilter];
 }
 
 - (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar {
@@ -376,7 +358,7 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
         [ac addAction:[UIAlertAction actionWithTitle:titles[(NSUInteger)i] style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
             self->_sortOrder = (LibrarySortOrder)i;
             [[NSUserDefaults standardUserDefaults] setInteger:i forKey:kPrefLibrarySortKey];
-            [self applySortAndFilter];
+            [self reloadFiles];
         }]];
     }
     [ac addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
@@ -519,100 +501,93 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
     return (NSInteger)_filteredItems.count;
 }
 
+- (void)updateDetailLabels:(PDFLibraryCell *)cell item:(PDFLibraryItem *)item {
+    cell.badgeLbl.hidden = !item.hasAnnotations;
+    cell.badgeLbl.text = item.hasAnnotations ? @"Annotated" : nil;
+    if (item.isDirectory) {
+        cell.metaLbl.text = item.detailsLoaded ? [NSString stringWithFormat:@"%lu item%@", (unsigned long)item.childCount,
+                                                  item.childCount == 1 ? @"" : @"s"] : @"Folder";
+    } else {
+        NSMutableArray *parts = [NSMutableArray array];
+        if (item.relativeFolder.length) [parts addObject:item.relativeFolder];
+        NSNumber *count = _pageCountCache[item.fullPath];
+        if (count.integerValue > 0) [parts addObject:[NSString stringWithFormat:@"%@ p.", count]];
+        [parts addObject:[[self class] formatFileSize:item.fileSize]];
+        if (item.lastPage > 0) [parts addObject:[NSString stringWithFormat:@"At p. %ld", (long)item.lastPage + 1]];
+        cell.metaLbl.text = [parts componentsJoinedByString:@" · "];
+    }
+    [cell setNeedsLayout];
+}
+
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     PDFLibraryCell *cell = [tableView dequeueReusableCellWithIdentifier:@"LibCell" forIndexPath:indexPath];
+    [cell.detailToken cancel];
     PDFLibraryItem *item = _filteredItems[(NSUInteger)indexPath.row];
-    cell.representedPath = item.fullPath;
-    cell.titleLbl.text = !item.isDirectory && [_favoritePaths containsObject:item.fullPath]
+    NSString *path = item.fullPath;
+    BOOL folder = item.isDirectory;
+    cell.titleLbl.text = !folder && [_favoritePaths containsObject:path]
         ? [@"★ " stringByAppendingString:item.name] : item.name;
-
-    if (item.isDirectory) {
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        cell.badgeLbl.hidden = YES;
-        cell.coverView.backgroundColor = [UIColor clearColor];
-        cell.coverView.layer.borderWidth = 0.0f;
-        cell.coverView.image = PDFIconFolder();
-        cell.coverView.tintColor = [UIColor colorWithRed:0.20f green:0.54f blue:0.96f alpha:1.0f];
-
-        NSArray *sub = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:item.fullPath error:NULL];
-        NSUInteger visibleCount = 0;
-        for (NSString *s in sub) {
-            if (![s hasPrefix:@"."]) visibleCount++;
-        }
-        cell.metaLbl.text = [NSString stringWithFormat:@"%lu item%@", (unsigned long)visibleCount, visibleCount == 1 ? @"" : @"s"];
-        return cell;
-    }
-
-    cell.accessoryType = UITableViewCellAccessoryNone;
-    cell.coverView.backgroundColor = [UIColor whiteColor];
-    cell.coverView.layer.borderWidth = 0.8f;
+    cell.accessoryType = folder ? UITableViewCellAccessoryDisclosureIndicator : UITableViewCellAccessoryNone;
+    cell.coverView.backgroundColor = folder ? [UIColor clearColor] : [UIColor whiteColor];
+    cell.coverView.layer.borderWidth = folder ? 0.0f : 0.8f;
     cell.coverView.layer.borderColor = [UIColor colorWithWhite:0.80f alpha:1.0f].CGColor;
-    cell.coverView.tintColor = nil;
+    cell.coverView.tintColor = folder ? [UIColor colorWithRed:0.20f green:0.54f blue:0.96f alpha:1.0f] : nil;
+    cell.coverView.image = folder ? PDFIconFolder() : [_coverCache objectForKey:path];
+    [self updateDetailLabels:cell item:item];
 
-    if (item.hasAnnotations) {
-        cell.badgeLbl.text = @"Annotated";
-        cell.badgeLbl.hidden = NO;
-    } else {
-        cell.badgeLbl.hidden = YES;
-    }
-
-    NSMutableArray<NSString *> *metaParts = [NSMutableArray array];
-    if (item.relativeFolder.length > 0) {
-        [metaParts addObject:item.relativeFolder];
-    }
-    if (item.cachedPageCount > 0) {
-        [metaParts addObject:[NSString stringWithFormat:@"%ld p.", (long)item.cachedPageCount]];
-    }
-    [metaParts addObject:[[self class] formatFileSize:item.fileSize]];
-    if (item.lastPage > 0) {
-        [metaParts addObject:[NSString stringWithFormat:@"At p. %ld", (long)(item.lastPage + 1)]];
-    }
-    cell.metaLbl.text = [metaParts componentsJoinedByString:@" · "];
-    [cell setNeedsLayout];
-
-    UIImage *cachedThumb = [_coverCache objectForKey:item.fullPath];
-    if (cachedThumb) {
-        cell.coverView.image = cachedThumb;
-    } else {
-        cell.coverView.image = nil;
-        NSString *path = item.fullPath;
-        NSCache *cache = _coverCache;
-        CGFloat scale = [UIScreen mainScreen].scale;
-        __weak typeof(self) weakSelf = self;
-        __weak PDFLibraryCell *weakCell = cell;
-
-        dispatch_async([PDFDoc utilityQueue], ^{
-            @autoreleasepool {
-                PDFDoc *doc = [[PDFDoc alloc] initWithPath:path];
-                NSInteger pCount = doc.pageCount;
-                UIImage *thumb = (pCount > 0) ? [doc renderThumbnailAtIndex:0 maxPixelSide:60.0f * scale] : nil;
-                if (thumb) [cache setObject:thumb forKey:path
-                                      cost:CGImageGetBytesPerRow(thumb.CGImage) * CGImageGetHeight(thumb.CGImage)];
-
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    __strong typeof(self) sSelf = weakSelf;
-                    if (sSelf && pCount > 0) {
-                        sSelf->_pageCountCache[path] = @(pCount);
-                        item.cachedPageCount = pCount;
-                    }
-                    PDFLibraryCell *sCell = weakCell;
-                    if (sCell && [sCell.representedPath isEqualToString:path]) {
-                        sCell.coverView.image = thumb;
-                        if (pCount > 0) {
-                            NSMutableArray<NSString *> *updated = [NSMutableArray array];
-                            if (item.relativeFolder.length > 0) [updated addObject:item.relativeFolder];
-                            [updated addObject:[NSString stringWithFormat:@"%ld p.", (long)pCount]];
-                            [updated addObject:[[sSelf class] formatFileSize:item.fileSize]];
-                            if (item.lastPage > 0) [updated addObject:[NSString stringWithFormat:@"At p. %ld", (long)(item.lastPage + 1)]];
-                            sCell.metaLbl.text = [updated componentsJoinedByString:@" · "];
+    BOOL needDetails = !item.detailsLoaded;
+    BOOL needCover = !folder && !cell.coverView.image;
+    if (!_visible || (!needDetails && !needCover)) return cell;
+    PDFCancelToken *token = [[PDFCancelToken alloc] init];
+    cell.detailToken = token;
+    CGFloat side = 60.0f * [UIScreen mainScreen].scale;
+    __weak PDFLibraryCell *weakCell = cell;
+    __weak typeof(self) weakSelf = self;
+    dispatch_async([PDFDoc utilityQueue], ^{
+        @autoreleasepool {
+            if (token.isCancelled) return;
+            NSInteger lastPage = 0, pageCount = 0;
+            NSUInteger children = 0;
+            BOOL annotated = NO;
+            if (needDetails) {
+                @autoreleasepool {
+                    if (folder) {
+                        for (NSString *name in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:path error:NULL]) {
+                            if (![name hasPrefix:@"."]) children++;
                         }
+                    } else {
+                        annotated = PDFReadLibraryAnnotationSummary(path, [AnnotationStore documentsDirectory],
+                                                                    [NSUserDefaults standardUserDefaults], &lastPage);
                     }
-                });
+                }
             }
-        });
-    }
-
+            if (token.isCancelled) return;
+            UIImage *cover = needCover ? [PDFDoc libraryCoverAtPath:path maxPixelSide:side pageCount:&pageCount cancelToken:token] : nil;
+            if (token.isCancelled) return;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                __strong typeof(self) owner = weakSelf;
+                PDFLibraryCell *row = weakCell;
+                if (!owner || row.detailToken != token || token.isCancelled) return;
+                if (needDetails) {
+                    item.detailsLoaded = YES;
+                    item.hasAnnotations = annotated;
+                    item.lastPage = lastPage;
+                    item.childCount = children;
+                }
+                if (cover) {
+                    [owner->_coverCache setObject:cover forKey:path cost:CGImageGetBytesPerRow(cover.CGImage) * CGImageGetHeight(cover.CGImage)];
+                    row.coverView.image = cover;
+                }
+                if (pageCount > 0) owner->_pageCountCache[path] = @(pageCount);
+                [owner updateDetailLabels:row item:item];
+            });
+        }
+    });
     return cell;
+}
+
+- (void)tableView:(UITableView *)tableView didEndDisplayingCell:(UITableViewCell *)cell forRowAtIndexPath:(NSIndexPath *)indexPath {
+    [((PDFLibraryCell *)cell).detailToken cancel];
 }
 
 #pragma mark - Row Selection, Swipe Actions & Context Menu
@@ -647,7 +622,8 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
     PDFSetLibraryFavorite(item.fullPath, favorite, docs, defaults);
     _favoritePaths = PDFLibraryFavoritePaths(docs, defaults);
     if (_showingFavorites && !favorite) [_allItems removeObject:item];
-    [self applySortAndFilter];
+    [self applyFilter];
+    if (_scan) [self reloadFiles];
 }
 
 - (NSArray<UITableViewRowAction *> *)tableView:(UITableView *)tableView editActionsForRowAtIndexPath:(NSIndexPath *)indexPath {

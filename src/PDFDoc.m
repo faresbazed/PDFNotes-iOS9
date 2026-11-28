@@ -145,6 +145,10 @@ static CGPDFOperatorTableRef PDFSharedOperatorTable(void) {
 }
 
 - (instancetype)initWithPath:(NSString *)path {
+    return [self initWithPath:path libraryCoverOnly:NO];
+}
+
+- (instancetype)initWithPath:(NSString *)path libraryCoverOnly:(BOOL)coverOnly {
     self = [super init];
     if (self) {
         _path = [path copy];
@@ -163,12 +167,22 @@ static CGPDFOperatorTableRef PDFSharedOperatorTable(void) {
                 CGPDFDocumentUnlockWithPassword(_pdf, "");
             }
             _isLocked = (_isEncrypted && !CGPDFDocumentIsUnlocked(_pdf));
-            if (!_isLocked) {
+            if (!_isLocked && coverOnly) {
+                // A cover needs only the first page, not the reader's per-page arrays or trim cache.
+                _pageCount = (NSInteger)CGPDFDocumentGetNumberOfPages(_pdf);
+            } else if (!_isLocked) {
                 [self setupPagesAndCacheKey];
             }
         }
     }
     return self;
+}
+
++ (UIImage *)libraryCoverAtPath:(NSString *)path maxPixelSide:(CGFloat)side
+                     pageCount:(NSInteger *)pageCount cancelToken:(PDFCancelToken *)token {
+    PDFDoc *doc = [[self alloc] initWithPath:path libraryCoverOnly:YES];
+    if (pageCount) *pageCount = doc.pageCount;
+    return doc.pageCount > 0 && !token.isCancelled ? [doc renderThumbnailAtIndex:0 maxPixelSide:side] : nil;
 }
 
 - (void)setupPagesAndCacheKey {
