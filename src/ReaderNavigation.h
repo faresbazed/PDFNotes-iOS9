@@ -1,4 +1,7 @@
 #import <Foundation/Foundation.h>
+#if defined(__APPLE__)
+#import <CoreGraphics/CGBase.h>
+#endif
 
 typedef NS_ENUM(NSInteger, PDFSavedPageFilter) {
     PDFSavedPageFilterAll,
