@@ -1,4 +1,5 @@
 #import "LibraryFavorites.h"
+#import "LibraryListing.h"
 
 static int failures;
 static void Check(BOOL ok, const char *message) {
@@ -54,7 +55,7 @@ int main(void) { @autoreleasepool {
     }
     for (NSString *path in @[root, nested, gone, replaced]) PDFSetLibraryFavorite(path, YES, docs, defaults);
     paths = PDFLibraryFavoritePaths(docs, defaults);
-    NSSet *available = [NSSet setWithArray:PDFAvailableFavoriteDocuments(paths, docs)];
+    NSSet *available = [NSSet setWithArray:[PDFScanLibrary(docs, docs, NO, paths, nil) valueForKey:@"fullPath"]];
     Check([available isEqualToSet:[NSSet setWithArray:@[root, nested]]], "Favorites view includes nested and root favorites, not ordinary PDFs, missing files or directories");
     [fm removeItemAtPath:docs error:NULL];
     [defaults removeObjectForKey:@"library.favoritePDFPaths"];

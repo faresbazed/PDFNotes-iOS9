@@ -22,12 +22,14 @@ NSMutableArray<PDFLibraryItem *> *PDFScanLibrary(NSString *directory, NSString *
                                                 NSSet<NSString *> *favorites, NSOperation *operation) {
     NSMutableArray *items = [NSMutableArray array];
     NSFileManager *fm = [NSFileManager defaultManager];
-    if (operation.cancelled) return items;
+    if ([operation isCancelled]) return items;
     if (favorites) {
-        for (NSString *path in PDFAvailableFavoriteDocuments(favorites, documents)) {
-            if (operation.cancelled) break;
-            NSDictionary *attrs = [fm attributesOfItemAtPath:path error:NULL];
-            [items addObject:Item(path, [path substringFromIndex:documents.length + 1], attrs, NO)];
+        for (NSString *path in favorites) {
+            if ([operation isCancelled]) break;
+            @autoreleasepool {
+                NSDictionary *attrs = PDFFavoriteFileAttributes(path, documents);
+                if (attrs) [items addObject:Item(path, [path substringFromIndex:documents.length + 1], attrs, NO)];
+            }
         }
         return items;
     }
@@ -35,15 +37,15 @@ NSMutableArray<PDFLibraryItem *> *PDFScanLibrary(NSString *directory, NSString *
     BOOL root = [directory isEqualToString:documents];
     NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:directory];
     NSString *relative;
-    while (!operation.cancelled && (relative = [enumerator nextObject])) {
+    while (![operation isCancelled] && (relative = [enumerator nextObject])) {
         @autoreleasepool {
-            if ([relative.lastPathComponent hasPrefix:@"."] ||
-                (root && ([relative isEqualToString:@"Inbox"] || [relative isEqualToString:@"Annotations"]))) {
-                [enumerator skipDescendents];
-                continue;
-            }
             NSDictionary *attrs = enumerator.fileAttributes;
             BOOL isDir = [[attrs fileType] isEqualToString:NSFileTypeDirectory];
+            if ([relative.lastPathComponent hasPrefix:@"."] ||
+                (root && ([relative isEqualToString:@"Inbox"] || [relative isEqualToString:@"Annotations"]))) {
+                if (isDir) [enumerator skipDescendents];
+                continue;
+            }
             if (isDir && !recursive) [enumerator skipDescendents];
             if (!isDir && ![relative.pathExtension.lowercaseString isEqualToString:@"pdf"]) continue;
             [items addObject:Item([directory stringByAppendingPathComponent:relative], relative, attrs, isDir)];

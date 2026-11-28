@@ -31,17 +31,12 @@ NSSet<NSString *> *PDFLibraryFavoritePaths(NSString *documents, NSUserDefaults *
     return paths;
 }
 
-NSArray<NSString *> *PDFAvailableFavoriteDocuments(NSSet<NSString *> *favoritePaths, NSString *documents) {
-    NSMutableArray *available = [NSMutableArray array];
-    NSFileManager *fm = [NSFileManager defaultManager];
-    for (NSString *path in favoritePaths) {
-        NSString *resolved = [path stringByResolvingSymlinksInPath];
-        NSString *relative = RelativePath(resolved, documents);
-        if (!relative || !VisibleRelativePath(relative)) continue;
-        NSDictionary *attrs = [fm attributesOfItemAtPath:resolved error:NULL];
-        if ([[attrs objectForKey:NSFileType] isEqualToString:NSFileTypeRegular]) [available addObject:path];
-    }
-    return available;
+NSDictionary *PDFFavoriteFileAttributes(NSString *path, NSString *documents) {
+    NSString *resolved = [path stringByResolvingSymlinksInPath];
+    NSString *relative = RelativePath(resolved, documents);
+    if (!relative || !VisibleRelativePath(relative)) return nil;
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:resolved error:NULL];
+    return [[attrs fileType] isEqualToString:NSFileTypeRegular] ? attrs : nil;
 }
 
 void PDFSetLibraryFavorite(NSString *path, BOOL favorite, NSString *documents, NSUserDefaults *defaults) {

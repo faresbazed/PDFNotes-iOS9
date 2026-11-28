@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 mkdir -p build/tests
 bash tests/run_library_listing.sh
 clang $(gnustep-config --objc-flags) -I"$(gcc -print-file-name=include)" -Isrc \
-    tests/LibraryFavoritesTests.m src/LibraryFavorites.m -o build/tests/library-favorites-tests $(gnustep-config --base-libs)
+    tests/LibraryFavoritesTests.m src/LibraryFavorites.m src/LibraryListing.m -o build/tests/library-favorites-tests $(gnustep-config --base-libs)
 build/tests/library-favorites-tests
 clang $(gnustep-config --objc-flags) -I"$(gcc -print-file-name=include)" -Isrc \
     tests/AnnotationFilesTests.m src/AnnotationFiles.m -o build/tests/annotation-tests $(gnustep-config --base-libs)

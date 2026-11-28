@@ -294,6 +294,7 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
     [_filteredItems removeAllObjects];
 
     for (PDFLibraryItem *item in _allItems) {
+        if (_showingFavorites && ![_favoritePaths containsObject:item.fullPath]) continue;
         if (q.length > 0) {
             NSRange r1 = [item.name rangeOfString:q options:(NSCaseInsensitiveSearch | NSDiacriticInsensitiveSearch)];
             NSRange r2 = [item.relativeFolder rangeOfString:q options:(NSCaseInsensitiveSearch | NSDiacriticInsensitiveSearch)];
@@ -621,7 +622,6 @@ static NSString *const kPrefLibrarySortKey = @"library.sortOrder";
     BOOL favorite = ![_favoritePaths containsObject:item.fullPath];
     PDFSetLibraryFavorite(item.fullPath, favorite, docs, defaults);
     _favoritePaths = PDFLibraryFavoritePaths(docs, defaults);
-    if (_showingFavorites && !favorite) [_allItems removeObject:item];
     [self applyFilter];
     if (_scan) [self reloadFiles];
 }
