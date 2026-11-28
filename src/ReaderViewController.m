@@ -84,6 +84,8 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     NSMutableArray<NSValue *> *_pageFrames;
     NSMutableDictionary<NSNumber *, PageView *> *_loadedPages;
     CGSize _lastLayoutSize;
+    PDFReadingAnchor _restoredAnchor;
+    CGRect _restoredViewport;
     BOOL _pagesReady;
     BOOL _didRestoreInitialPage;
     BOOL _isClosing;
@@ -912,9 +914,11 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
 
 - (PDFReadingAnchor)readingAnchor {
     if (!_pagesReady || !_pageFrames.count) return (PDFReadingAnchor){ NSNotFound, 0, 0 };
+    CGRect viewport = [self currentViewportInContentCoords];
+    // A slide can fit in only one orientation. Don't reclassify it until the reader moves.
+    if (CGRectEqualToRect(viewport, _restoredViewport)) return _restoredAnchor;
     NSInteger page = [self currentCenteredPageIndex];
     CGRect frame = [_pageFrames[(NSUInteger)page] CGRectValue];
-    CGRect viewport = [self currentViewportInContentCoords];
     PDFReadingReference reference = PDFReadingReferenceForViewport(viewport.origin.y, viewport.size.height, _contentView.bounds.size.height,
                                                                  frame.origin.y, frame.size.height);
     CGFloat y = CGRectGetMidY(viewport);
@@ -931,6 +935,8 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
     CGRect frame = [_pageFrames[(NSUInteger)anchor.page] CGRectValue];
     CGFloat y = PDFRestoreReadingOffset(anchor, frame.origin.y, frame.size.height, containerSize.height, _scrollView.contentSize.height);
     _scrollView.contentOffset = CGPointMake(0, y);
+    _restoredAnchor = anchor;
+    _restoredViewport = (CGRect){_scrollView.contentOffset, containerSize};
 }
 
 - (void)rebuildPageFramesForContainerSize:(CGSize)containerSize {
@@ -1128,6 +1134,7 @@ static UIImage *PDFRainbowTrackImage(CGSize size) {
 
 - (void)jumpToPage:(NSInteger)pageIndex animated:(BOOL)animated {
     if (!_pagesReady || pageIndex < 0 || (NSUInteger)pageIndex >= _pageFrames.count) return;
+    _restoredViewport = CGRectNull;
     if (_scrollView.zoomScale != 1.0f) {
         [_scrollView setZoomScale:1.0f animated:NO];
         _scrollView.contentInset = UIEdgeInsetsZero;

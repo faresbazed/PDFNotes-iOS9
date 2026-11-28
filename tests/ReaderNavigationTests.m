@@ -52,6 +52,10 @@ int main(void) { @autoreleasepool {
     Check(shifted.reference == PDFReadingSlideCenter && PDFRestoreReadingOffset(shifted, 1500, 320, 720, 4000) == 1340,
           "a small scroll on a short slide preserves the point under the viewport center");
     PDFReadingAnchor topLine = {5, 0.9, PDFReadingReferenceForViewport(1800, 1000, 5000, 2000, 2000)};
+    PDFReadingAnchor roundTrip = {6, 0.75, PDFReadingReferenceForViewport(1000, 1000, 5000, 900, 800)};
+    Check(PDFRestoreReadingOffset(roundTrip, 1600, 1080, 720, 6000) == 2050 &&
+          PDFRestoreReadingOffset(roundTrip, 900, 800, 1000, 5000) == 1000,
+          "reusing the restored anchor returns to the same line when a slide fits in only one orientation");
     Check(topLine.reference == PDFReadingTopLine && PDFRestoreReadingOffset(topLine, 0, 3000, 720, 6000) == 2700,
           "across a tall page break relayout follows the top line, not the next page");
     PDFReadingAnchor start = {0, 0, PDFReadingReferenceForViewport(0, 1000, 2500, 80, 840)};
