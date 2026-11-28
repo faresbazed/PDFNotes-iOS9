@@ -36,16 +36,24 @@ NSUInteger PDFJumpBackIndex(NSArray<NSNumber *> *history, NSInteger currentPage)
     return NSNotFound;
 }
 
-CGFloat PDFPageJumpOffset(CGFloat pageTop, CGFloat pageHeight, CGFloat viewportHeight, CGFloat contentHeight, CGFloat topMargin) {
-    CGFloat centered = pageTop + (pageHeight - viewportHeight) * 0.5f;
-    CGFloat offset = MIN(pageTop - topMargin, centered);
-    return MAX(0, MIN(offset, contentHeight - viewportHeight));
+CGFloat PDFPageEdgePadding(CGFloat pageHeight, CGFloat zoomScale, CGFloat viewportHeight, CGFloat minimum) {
+    return MAX(minimum, (viewportHeight - pageHeight * zoomScale) * 0.5f);
 }
 
-PDFReadingReference PDFReadingReferenceForViewport(CGFloat viewportTop, CGFloat viewportHeight, CGFloat contentHeight,
+static CGFloat PDFClampOffset(CGFloat offset, CGFloat viewportHeight, PDFDocumentBounds bounds) {
+    return MAX(bounds.start, MIN(offset, bounds.end - viewportHeight));
+}
+
+CGFloat PDFPageJumpOffset(CGFloat pageTop, CGFloat pageHeight, CGFloat viewportHeight, PDFDocumentBounds bounds, CGFloat topMargin) {
+    CGFloat centered = pageTop + (pageHeight - viewportHeight) * 0.5f;
+    CGFloat offset = MIN(pageTop - topMargin, centered);
+    return PDFClampOffset(offset, viewportHeight, bounds);
+}
+
+PDFReadingReference PDFReadingReferenceForViewport(CGFloat viewportTop, CGFloat viewportHeight, PDFDocumentBounds bounds,
                                                  CGFloat centeredPageTop, CGFloat centeredPageHeight) {
-    if (viewportTop <= 0.5f) return PDFReadingDocumentStart;
-    if (viewportTop + viewportHeight >= contentHeight - 0.5f) return PDFReadingDocumentEnd;
+    if (viewportTop <= bounds.start + 0.5f) return PDFReadingDocumentStart;
+    if (viewportTop + viewportHeight >= bounds.end - 0.5f) return PDFReadingDocumentEnd;
     CGFloat midY = viewportTop + viewportHeight * 0.5f;
     if (centeredPageHeight < viewportHeight && midY >= centeredPageTop && midY <= centeredPageTop + centeredPageHeight) {
         return PDFReadingSlideCenter;
@@ -54,10 +62,10 @@ PDFReadingReference PDFReadingReferenceForViewport(CGFloat viewportTop, CGFloat 
 }
 
 CGFloat PDFRestoreReadingOffset(PDFReadingAnchor anchor, CGFloat pageTop, CGFloat pageHeight,
-                                CGFloat viewportHeight, CGFloat contentHeight) {
-    if (anchor.reference == PDFReadingDocumentStart) return 0;
-    if (anchor.reference == PDFReadingDocumentEnd) return MAX(0, contentHeight - viewportHeight);
+                                CGFloat viewportHeight, PDFDocumentBounds bounds) {
+    if (anchor.reference == PDFReadingDocumentStart) return bounds.start;
+    if (anchor.reference == PDFReadingDocumentEnd) return PDFClampOffset(bounds.end, viewportHeight, bounds);
     CGFloat y = pageTop + anchor.pageFraction * pageHeight;
     if (anchor.reference == PDFReadingSlideCenter) y -= viewportHeight * 0.5f;
-    return MAX(0, MIN(y, contentHeight - viewportHeight));
+    return PDFClampOffset(y, viewportHeight, bounds);
 }

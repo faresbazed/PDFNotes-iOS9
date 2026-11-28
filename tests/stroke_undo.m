@@ -17,11 +17,13 @@ static NSUInteger strokeCopies;
 }
 @end
 typedef NSObject TextNote;
+enum { PDFEditAllPages = -1 };
 
 @interface PDFPageEditAction : NSObject {
     NSInteger _pageIndex;
     Stroke *_appendedStroke;
     NSArray *_beforeStrokes, *_afterStrokes, *_beforeNotes, *_afterNotes;
+    NSMutableDictionary *_documentStrokes, *_documentNotes;
 }
 @property (nonatomic, assign) NSInteger pageIndex;
 @property (nonatomic, retain) Stroke *appendedStroke;
@@ -29,8 +31,11 @@ typedef NSObject TextNote;
 @property (nonatomic, retain) NSArray *afterStrokes;
 @property (nonatomic, retain) NSArray *beforeNotes;
 @property (nonatomic, retain) NSArray *afterNotes;
+@property (nonatomic, retain) NSMutableDictionary *documentStrokes;
+@property (nonatomic, retain) NSMutableDictionary *documentNotes;
 @end
 @implementation PDFPageEditAction
+@synthesize documentStrokes = _documentStrokes, documentNotes = _documentNotes;
 @synthesize appendedStroke = _appendedStroke;
 @synthesize pageIndex = _pageIndex, beforeStrokes = _beforeStrokes;
 @synthesize afterStrokes = _afterStrokes, beforeNotes = _beforeNotes, afterNotes = _afterNotes;
@@ -101,6 +106,12 @@ int main(void) {
         Check([store canRedo], "undo enables redo");
         [store addStroke:a onPage:1];
         Check(![store canRedo], "new edit discards redo");
+        NSUInteger beforeClear = strokeCopies;
+        [store clearAllAnnotations];
+        Check(!store.hasAnnotations && [store undoReturningPage] == PDFEditAllPages &&
+              [store strokesForPage:0].count == 2 && [store strokesForPage:1].count == 1 &&
+              [store redoReturningPage] == PDFEditAllPages && !store.hasAnnotations &&
+              strokeCopies == beforeClear, "document clear, Undo and Redo never copy stroke geometry");
         AnnotationStore *dense = [AnnotationStore new];
         strokeCopies = 0;
         for (NSUInteger i = 0; i < 256; i++) {

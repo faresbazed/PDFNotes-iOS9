@@ -10,7 +10,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 source = (ROOT / "src/Models.m").read_text()
 names = [
     "deepCopyStrokes", "deepCopyNotes", "pushEditAction", "pushUndoForPage", "strokesForPage",
-    "addStroke", "replaceStrokes", "clearPage", "canUndo", "canRedo",
+    "addStroke", "replaceStrokes", "clearPage", "hasAnnotations", "swapAnnotationsForDocumentEdit",
+    "clearAllAnnotations", "canUndo", "canRedo",
     "applyStateForPage", "undoReturningPage", "redoReturningPage",
 ]
 methods = []
